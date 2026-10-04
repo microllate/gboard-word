@@ -27,8 +27,10 @@ public final class MainHook implements IXposedHookLoadPackage {
                     @Override protected void beforeHookedMethod(MethodHookParam x) {
                         if (!Boolean.TRUE.equals(x.args[1])) return;
                         Object c = x.args[0];
+                        Object processor = x.thisObject;
                         XposedBridge.log(TAG + ": SELECTED candidate=" + field(c, "a"));
-                        dump(x.thisObject);
+                        Object hdl = field(processor, "B");
+                        dump(hdl, "hdl");
                     }
                 });
                 hooked++;
@@ -50,13 +52,13 @@ public final class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    private static void dump(Object o) {
+    private static void dump(Object o, String label) {
         if (o == null) {
-            XposedBridge.log(TAG + ": processor=null");
+            XposedBridge.log(TAG + ": " + label + "=null");
             return;
         }
         Class<?> c = o.getClass();
-        StringBuilder s = new StringBuilder(TAG + ": processor class=" + c.getName());
+        StringBuilder s = new StringBuilder(TAG + ": " + label + " class=" + c.getName());
         for (Field f : c.getDeclaredFields()) {
             if (Modifier.isStatic(f.getModifiers())) continue;
             try {
