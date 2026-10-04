@@ -15,7 +15,7 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static final String GBOARD = "com.google.android.inputmethod.latin";
     private static final String PROCESSOR = "com.google.android.apps.inputmethod.libs.chinese.ime.hmm.AbstractHmmChineseDecodeProcessor";
     private static final String HMM_PROCESSOR = "com.google.android.apps.inputmethod.libs.hmm.AbstractHmmDecodeProcessor";
-    private static PersonalDb db;
+    private static PersonalDb db;\n    private static boolean iteratorHookInstalled;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
@@ -34,7 +34,13 @@ public final class MainHook implements IXposedHookLoadPackage {
                         Object candidate = x.args[0];
                         Object text = field(candidate, "a");
                         Object index = field(candidate, "m");
-                        Object learned = findFieldInHierarchy(x.thisObject, "O");
+                        Object learned = findFieldInHierarchy(x.thisObject, "O");\n                        if (!iteratorHookInstalled) {
+                            Object hdl = findFieldInHierarchy(x.thisObject, "m");
+                            if (hdl != null) {
+                                installIteratorHook(hdl.getClass());
+                            }
+                        }
+
 
                         if (learned != null && "hcv".equals(learned.getClass().getSimpleName())) {
                             Object a = field(learned, "a");
@@ -65,54 +71,60 @@ public final class MainHook implements IXposedHookLoadPackage {
                 hooked++;
             }
 
-            Class<?> hctClass = XposedHelpers.findClass(
-                    "defpackage.hct", p.classLoader);
-            int iteratorHooks = 0;
-            for (Method m : hctClass.getDeclaredMethods()) {
-                if (!"f".equals(m.getName()) || m.getParameterTypes().length != 0) continue;
-                if (!Iterator.class.isAssignableFrom(m.getReturnType())) continue;
-                m.setAccessible(true);
-                XposedBridge.hookMethod(m, new XC_MethodHook() {
-                    @Override protected void afterHookedMethod(MethodHookParam x) {
-                        Object result = x.getResult();
-                        XposedBridge.log(TAG + ": F_RETURN iterator=" + summarize(result));
-                        if (!(result instanceof Iterator)) return;
-
-                        final Iterator<?> original = (Iterator<?>) result;
-                        x.setResult(new Iterator<Object>() {
-                            private int logged;
-
-                            @Override public boolean hasNext() {
-                                return original.hasNext();
-                            }
-
-                            @Override public Object next() {
-                                Object candidate = original.next();
-                                if (logged < 8) {
-                                    Object text = field(candidate, "a");
-                                    Object index = field(candidate, "m");
-                                    XposedBridge.log(TAG + ": LIST[" + logged + "] text="
-                                            + String.valueOf(text) + " index=" + String.valueOf(index));
-                                    logged++;
-                                }
-                                return candidate;
-                            }
-
-                            @Override public void remove() {
-                                original.remove();
-                            }
-                        });
-                    }
-                });
-                iteratorHooks++;
-            }
-
-            XposedBridge.log(TAG + ": hooked hct.f iterator methods=" + iteratorHooks);
+            XposedBridge.log(TAG + ": Z hook ready; f() will be hooked from runtime hdl class");
 
             XposedBridge.log(TAG + ": hooked Z candidate selection methods=" + hooked);
-            XposedBridge.log(TAG + ": hooked aB candidate producer");
+
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": hook install failed: "
+                    + android.util.Log.getStackTraceString(t));
+        }
+    }
+
+    private static synchronized void installIteratorHook(Class<?> runtimeClass) {
+        if (iteratorHookInstalled || runtimeClass == null) return;
+        try {
+            Class<?> c = runtimeClass;
+            while (c != null) {
+                for (Method m : c.getDeclaredMethods()) {
+                    if (!"f".equals(m.getName()) || m.getParameterTypes().length != 0) continue;
+                    if (!Iterator.class.isAssignableFrom(m.getReturnType())) continue;
+                    m.setAccessible(true);
+                    XposedBridge.hookMethod(m, new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam x) {
+                            Object result = x.getResult();
+                            XposedBridge.log(TAG + ": F_RETURN class="
+                                    + x.thisObject.getClass().getName()
+                                    + " iterator=" + summarize(result));
+                            if (!(result instanceof Iterator)) return;
+                            final Iterator<?> original = (Iterator<?>) result;
+                            x.setResult(new Iterator<Object>() {
+                                private int logged;
+                                @Override public boolean hasNext() { return original.hasNext(); }
+                                @Override public Object next() {
+                                    Object candidate = original.next();
+                                    if (logged < 8) {
+                                        Object text = field(candidate, "a");
+                                        Object index = field(candidate, "m");
+                                        XposedBridge.log(TAG + ": LIST[" + logged + "] text="
+                                                + String.valueOf(text) + " index=" + String.valueOf(index));
+                                        logged++;
+                                    }
+                                    return candidate;
+                                }
+                                @Override public void remove() { original.remove(); }
+                            });
+                        }
+                    });
+                    iteratorHookInstalled = true;
+                    XposedBridge.log(TAG + ": hooked runtime f() class=" + c.getName());
+                    return;
+                }
+                c = c.getSuperclass();
+            }
+            XposedBridge.log(TAG + ": runtime f() not found class=" + runtimeClass.getName());
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": runtime f() hook failed: "
                     + android.util.Log.getStackTraceString(t));
         }
     }
