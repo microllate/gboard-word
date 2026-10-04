@@ -101,6 +101,11 @@ public final class MainHook implements IXposedHookLoadPackage {
                         @Override
                         protected void afterHookedMethod(MethodHookParam x) {
                             try {
+                                Object processor = x.thisObject;
+                                Object hcv = findFieldInHierarchy(processor, "O");
+                                Object pinyin = hcv == null ? null : field(hcv, "b");
+                                XposedBridge.log(TAG + ": B() PINYIN=" + join(pinyin));
+
                                 Object iterator = x.getResult();
                                 if (iterator != null) {
                                     installCandidateHookExact(iterator.getClass());
