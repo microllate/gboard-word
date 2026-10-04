@@ -2,7 +2,6 @@ package com.microllate.gboardword;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
-
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -15,60 +14,60 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static final String PROCESSOR = "com.google.android.apps.inputmethod.libs.chinese.ime.hmm.AbstractHmmChineseDecodeProcessor";
 
     @Override
-    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
-        if (!GBOARD.equals(lpparam.packageName)) return;
-
+    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
+        if (!GBOARD.equals(p.packageName)) return;
         try {
-            ClassLoader cl = lpparam.classLoader;
-            Class<?> processorClass = XposedHelpers.findClass(PROCESSOR, cl);
+            Class<?> pc = XposedHelpers.findClass(PROCESSOR, p.classLoader);
             int hooked = 0;
-
-            for (java.lang.reflect.Method method : processorClass.getDeclaredMethods()) {
-                if (!"Z".equals(method.getName())) continue;
-                Class<?>[] params = method.getParameterTypes();
-                if (params.length != 2 || params[1] != boolean.class) continue;
-
-                XposedBridge.hookMethod(method, new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
-                        Object candidate = param.args[0];
-                        StringBuilder sb = new StringBuilder(TAG + ": Z() oog dump");
-
-                        if (candidate == null) {
-                            sb.append(" <null>");
-                        } else {
-                            Class<?> c = candidate.getClass();
-                            sb.append(" class=").append(c.getName());
-
-                            for (Field field : c.getDeclaredFields()) {
-                                if (Modifier.isStatic(field.getModifiers())) continue;
-                                try {
-                                    field.setAccessible(true);
-                                    Object value = field.get(candidate);
-                                    sb.append(" | ")
-                                      .append(field.getName())
-                                      .append(":")
-                                      .append(field.getType().getName())
-                                      .append("=")
-                                      .append(String.valueOf(value));
-                                } catch (Throwable t) {
-                                    sb.append(" | ")
-                                      .append(field.getName())
-                                      .append(":<error>");
-                                }
-                            }
-                        }
-
-                        sb.append(" | arg1=").append(param.args[1]);
-                        XposedBridge.log(sb.toString());
+            for (java.lang.reflect.Method m : pc.getDeclaredMethods()) {
+                if (!"Z".equals(m.getName())) continue;
+                Class<?>[] ps = m.getParameterTypes();
+                if (ps.length != 2 || ps[1] != boolean.class) continue;
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override protected void beforeHookedMethod(MethodHookParam x) {
+                        if (!Boolean.TRUE.equals(x.args[1])) return;
+                        Object c = x.args[0];
+                        XposedBridge.log(TAG + ": SELECTED candidate=" + field(c, "a"));
+                        dump(x.thisObject);
                     }
                 });
                 hooked++;
             }
-
             XposedBridge.log(TAG + ": hooked Z candidate selection methods=" + hooked);
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": hook install failed: " + android.util.Log.getStackTraceString(t));
         }
+    }
+
+    private static Object field(Object o, String n) {
+        if (o == null) return null;
+        try {
+            Field f = o.getClass().getDeclaredField(n);
+            f.setAccessible(true);
+            return f.get(o);
+        } catch (Throwable t) {
+            return "<" + t.getClass().getSimpleName() + ">";
+        }
+    }
+
+    private static void dump(Object o) {
+        if (o == null) {
+            XposedBridge.log(TAG + ": processor=null");
+            return;
+        }
+        Class<?> c = o.getClass();
+        StringBuilder s = new StringBuilder(TAG + ": processor class=" + c.getName());
+        for (Field f : c.getDeclaredFields()) {
+            if (Modifier.isStatic(f.getModifiers())) continue;
+            try {
+                f.setAccessible(true);
+                s.append(" | ").append(f.getName()).append(":")
+                 .append(f.getType().getName()).append("=")
+                 .append(String.valueOf(f.get(o)));
+            } catch (Throwable e) {
+                s.append(" | ").append(f.getName()).append(":<error>");
+            }
+        }
+        XposedBridge.log(s.toString());
     }
 }
