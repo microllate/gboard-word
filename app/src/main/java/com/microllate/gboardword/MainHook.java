@@ -31,7 +31,6 @@ public final class MainHook implements IXposedHookLoadPackage {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override protected void afterHookedMethod(MethodHookParam x) {
                         if (!Boolean.TRUE.equals(x.args[1])) return;
-
                         Object candidate = x.args[0];
                         Object text = field(candidate, "a");
                         Object index = field(candidate, "m");
@@ -43,7 +42,6 @@ public final class MainHook implements IXposedHookLoadPackage {
                             Object e = field(learned, "e");
                             String phrase = a == null ? null : String.valueOf(a);
                             String pinyin = join(b);
-
                             if (Boolean.TRUE.equals(e) && phrase != null
                                     && !phrase.isEmpty() && b != null) {
                                 try {
@@ -59,10 +57,8 @@ public final class MainHook implements IXposedHookLoadPackage {
                                 }
                             }
                         } else {
-                            XposedBridge.log(TAG
-                                    + ": SELECTED text=" + text
-                                    + " index=" + index
-                                    + " O=" + summarize(learned));
+                            XposedBridge.log(TAG + ": SELECTED text=" + text
+                                    + " index=" + index + " O=" + summarize(learned));
                         }
                     }
                 });
@@ -70,19 +66,17 @@ public final class MainHook implements IXposedHookLoadPackage {
             }
 
             Class<?> hc = XposedHelpers.findClass(HMM_PROCESSOR, p.classLoader);
-            Method bMethod = hc.getDeclaredMethod("B");
-            bMethod.setAccessible(true);
-            XposedBridge.hookMethod(bMethod, new XC_MethodHook() {
-                @Override protected void afterHookedMethod(MethodHookParam x) {
-                    Object iterator = x.getResult();
-                    Object hdl = field(x.thisObject, "m");
-                    Object input = field(hdl, "d");
-                    XposedBridge.log(TAG + ": CANDIDATES input=" + String.valueOf(input)
+            Method aAMethod = hc.getDeclaredMethod("aA", int.class);
+            aAMethod.setAccessible(true);
+            XposedBridge.hookMethod(aAMethod, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam x) {
+                    Object iterator = field(x.thisObject, "d");
+                    XposedBridge.log(TAG + ": LIST inputCount=" + String.valueOf(x.args[0])
                             + " iterator=" + summarize(iterator));
                     if (!(iterator instanceof Iterator)) return;
 
                     final Iterator<?> original = (Iterator<?>) iterator;
-                    x.setResult(new Iterator<Object>() {
+                    fieldSet(x.thisObject, "d", new Iterator<Object>() {
                         private int logged;
 
                         @Override public boolean hasNext() {
@@ -94,7 +88,7 @@ public final class MainHook implements IXposedHookLoadPackage {
                             if (logged < 8) {
                                 Object text = field(candidate, "a");
                                 Object index = field(candidate, "m");
-                                XposedBridge.log(TAG + ": CANDIDATE[" + logged + "] text="
+                                XposedBridge.log(TAG + ": LIST[" + logged + "] text="
                                         + String.valueOf(text) + " index=" + String.valueOf(index));
                                 logged++;
                             }
@@ -109,9 +103,10 @@ public final class MainHook implements IXposedHookLoadPackage {
             });
 
             XposedBridge.log(TAG + ": hooked Z candidate selection methods=" + hooked);
-            XposedBridge.log(TAG + ": hooked B candidate iterator");
+            XposedBridge.log(TAG + ": hooked aA candidate consumer");
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": hook install failed: " + android.util.Log.getStackTraceString(t));
+            XposedBridge.log(TAG + ": hook install failed: "
+                    + android.util.Log.getStackTraceString(t));
         }
     }
 
@@ -167,22 +162,27 @@ public final class MainHook implements IXposedHookLoadPackage {
     }
 
     private static Object field(Object o, String n) {
-        if (o == null) return null;
+        return findFieldInHierarchy(o, n);
+    }
+
+    private static void fieldSet(Object o, String n, Object value) {
+        if (o == null) return;
         try {
             Class<?> c = o.getClass();
             while (c != null) {
                 try {
                     Field f = c.getDeclaredField(n);
                     f.setAccessible(true);
-                    return f.get(o);
+                    f.set(o, value);
+                    return;
                 } catch (NoSuchFieldException e) {
                     c = c.getSuperclass();
                 }
             }
         } catch (Throwable t) {
-            return "<" + t.getClass().getSimpleName() + ">";
+            XposedBridge.log(TAG + ": fieldSet failed: "
+                    + android.util.Log.getStackTraceString(t));
         }
-        return null;
     }
 
     private static String summarize(Object o) {
