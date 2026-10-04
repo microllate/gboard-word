@@ -22,7 +22,12 @@ public final class MainHook implements IXposedHookLoadPackage {
             Application app = (Application) XposedHelpers.callStaticMethod(
                     Class.forName("android.app.ActivityThread"),
                     "currentApplication");
-            if (app != null) db = new PersonalDb(app);
+            if (app == null) {
+                XposedBridge.log(TAG + ": DB init FAILED: currentApplication=null");
+            } else {
+                db = new PersonalDb(app);
+                XposedBridge.log(TAG + ": DB init OK");
+            }
 
             Class<?> pc = XposedHelpers.findClass(PROCESSOR, p.classLoader);
             int hooked = 0;
@@ -55,7 +60,7 @@ public final class MainHook implements IXposedHookLoadPackage {
                                             + " pinyin=" + pinyin);
                                 } catch (Throwable t) {
                                     XposedBridge.log(TAG + ": DB save failed: "
-                                            + t.getClass().getSimpleName());
+                                            + android.util.Log.getStackTraceString(t));
                                 }
                             }
                         } else {
