@@ -1,5 +1,8 @@
 package com.microllate.gboardword;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -28,9 +31,36 @@ public final class MainHook implements IXposedHookLoadPackage {
                 XposedBridge.hookMethod(method, new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) {
-                        XposedBridge.log(TAG + ": Z() CALLED, arg0="
-                                + (param.args[0] == null ? "null" : param.args[0].getClass().getName())
-                                + ", arg1=" + param.args[1]);
+                        Object candidate = param.args[0];
+                        StringBuilder sb = new StringBuilder(TAG + ": Z() oog dump");
+
+                        if (candidate == null) {
+                            sb.append(" <null>");
+                        } else {
+                            Class<?> c = candidate.getClass();
+                            sb.append(" class=").append(c.getName());
+
+                            for (Field field : c.getDeclaredFields()) {
+                                if (Modifier.isStatic(field.getModifiers())) continue;
+                                try {
+                                    field.setAccessible(true);
+                                    Object value = field.get(candidate);
+                                    sb.append(" | ")
+                                      .append(field.getName())
+                                      .append(":")
+                                      .append(field.getType().getName())
+                                      .append("=")
+                                      .append(String.valueOf(value));
+                                } catch (Throwable t) {
+                                    sb.append(" | ")
+                                      .append(field.getName())
+                                      .append(":<error>");
+                                }
+                            }
+                        }
+
+                        sb.append(" | arg1=").append(param.args[1]);
+                        XposedBridge.log(sb.toString());
                     }
                 });
                 hooked++;
