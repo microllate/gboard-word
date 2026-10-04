@@ -19,16 +19,6 @@ public final class MainHook implements IXposedHookLoadPackage {
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
         if (!GBOARD.equals(p.packageName)) return;
         try {
-            Application app = (Application) XposedHelpers.callStaticMethod(
-                    Class.forName("android.app.ActivityThread"),
-                    "currentApplication");
-            if (app == null) {
-                XposedBridge.log(TAG + ": DB init FAILED: currentApplication=null");
-            } else {
-                db = new PersonalDb(app);
-                XposedBridge.log(TAG + ": DB init OK");
-            }
-
             Class<?> pc = XposedHelpers.findClass(PROCESSOR, p.classLoader);
             int hooked = 0;
             for (Method m : pc.getDeclaredMethods()) {
@@ -52,12 +42,15 @@ public final class MainHook implements IXposedHookLoadPackage {
                             String phrase = a == null ? null : String.valueOf(a);
                             String pinyin = join(b);
 
-                            if (Boolean.TRUE.equals(e) && db != null && phrase != null
+                            if (Boolean.TRUE.equals(e) && phrase != null
                                     && !phrase.isEmpty() && b != null) {
                                 try {
-                                    db.record(pinyin, phrase);
-                                    XposedBridge.log(TAG + ": SAVED phrase=" + phrase
-                                            + " pinyin=" + pinyin);
+                                    ensureDb();
+                                    if (db != null) {
+                                        db.record(pinyin, phrase);
+                                        XposedBridge.log(TAG + ": SAVED phrase=" + phrase
+                                                + " pinyin=" + pinyin);
+                                    }
                                 } catch (Throwable t) {
                                     XposedBridge.log(TAG + ": DB save failed: "
                                             + android.util.Log.getStackTraceString(t));
@@ -76,6 +69,24 @@ public final class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + ": hooked Z candidate selection methods=" + hooked);
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": hook install failed: " + android.util.Log.getStackTraceString(t));
+        }
+    }
+
+    private static synchronized void ensureDb() {
+        if (db != null) return;
+        try {
+            Application app = (Application) XposedHelpers.callStaticMethod(
+                    Class.forName("android.app.ActivityThread"),
+                    "currentApplication");
+            if (app == null) {
+                XposedBridge.log(TAG + ": DB init FAILED: currentApplication=null");
+                return;
+            }
+            db = new PersonalDb(app);
+            XposedBridge.log(TAG + ": DB init OK (lazy)");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": DB init FAILED: "
+                    + android.util.Log.getStackTraceString(t));
         }
     }
 
