@@ -12,7 +12,6 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static final String TAG = "GboardWord";
     private static final String GBOARD = "com.google.android.inputmethod.latin";
     private static final String PROCESSOR = "com.google.android.apps.inputmethod.libs.chinese.ime.hmm.AbstractHmmChineseDecodeProcessor";
-    private static final String ENGINE = "com.google.android.apps.inputmethod.libs.hmm.HmmEngineInterfaceImpl";
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
@@ -24,42 +23,29 @@ public final class MainHook implements IXposedHookLoadPackage {
                 if (!"Z".equals(m.getName())) continue;
                 Class<?>[] ps = m.getParameterTypes();
                 if (ps.length != 2 || ps[1] != boolean.class) continue;
+
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
-                    @Override protected void beforeHookedMethod(MethodHookParam x) {
+                    @Override protected void afterHookedMethod(MethodHookParam x) {
                         if (!Boolean.TRUE.equals(x.args[1])) return;
 
                         Object candidate = x.args[0];
                         Object text = field(candidate, "a");
-                        Object indexObj = field(candidate, "m");
-                        if (!(indexObj instanceof Integer)) return;
-                        int index = (Integer) indexObj;
+                        Object index = field(candidate, "m");
 
-                        try {
-                            Object hdl = findFieldInHierarchy(x.thisObject, "B");
-                            Object engine = findFieldInHierarchy(hdl, "j");
-                            if (engine == null || !ENGINE.equals(engine.getClass().getName())) return;
+                        Object composing = findFieldInHierarchy(x.thisObject, "G");
+                        Object learned = findFieldInHierarchy(x.thisObject, "O");
+                        Object selected = findFieldInHierarchy(x.thisObject, "U");
+                        Object learnedFlag = findFieldInHierarchy(x.thisObject, "P");
+                        Object mHdl = findFieldInHierarchy(x.thisObject, "m");
 
-                            Method tokenMethod = engine.getClass().getMethod("i", int.class, int.class);
-                            Method rangeMethod = engine.getClass().getDeclaredMethod("nativeGetCandidateRange", long.class, int.class);
-                            rangeMethod.setAccessible(true);
-                            Object engineState = findFieldInHierarchy(engine, "a");
-                            Object nativeHolder = engineState;
-                            Method handleMethod = nativeHolder.getClass().getMethod("a");
-                            long engineHandle = ((Long) handleMethod.invoke(nativeHolder)).longValue();
-                            Object range = rangeMethod.invoke(null, engineHandle, index);
-
-                            Field startField = range.getClass().getField("startVertexIndex");
-                            Field endField = range.getClass().getField("endVertexIndex");
-                            int startVertex = startField.getInt(range);
-                            int endVertex = endField.getInt(range);
-
-                            XposedBridge.log(TAG + ": RANGE candidate=" + text
-                                    + " index=" + index
-                                    + " start=" + startVertex
-                                    + " end=" + endVertex);                        } catch (Throwable t) {
-                            XposedBridge.log(TAG + ": TOKEN candidate=" + text
-                                    + " error=" + t.getClass().getSimpleName());
-                        }
+                        XposedBridge.log(TAG
+                                + ": STATE candidate=" + text
+                                + " index=" + index
+                                + " G=" + composing
+                                + " O=" + summarize(learned)
+                                + " U=" + summarize(selected)
+                                + " P=" + learnedFlag
+                                + " m=" + className(mHdl));
                     }
                 });
                 hooked++;
@@ -70,17 +56,21 @@ public final class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    private static Object findFieldInHierarchy(Object o, String n) throws Exception {
+    private static Object findFieldInHierarchy(Object o, String n) {
         if (o == null) return null;
-        Class<?> c = o.getClass();
-        while (c != null) {
-            try {
-                Field f = c.getDeclaredField(n);
-                f.setAccessible(true);
-                return f.get(o);
-            } catch (NoSuchFieldException e) {
-                c = c.getSuperclass();
+        try {
+            Class<?> c = o.getClass();
+            while (c != null) {
+                try {
+                    Field f = c.getDeclaredField(n);
+                    f.setAccessible(true);
+                    return f.get(o);
+                } catch (NoSuchFieldException e) {
+                    c = c.getSuperclass();
+                }
             }
+        } catch (Throwable t) {
+            return "<" + t.getClass().getSimpleName() + ">";
         }
         return null;
     }
@@ -88,12 +78,28 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static Object field(Object o, String n) {
         if (o == null) return null;
         try {
-            Field f = o.getClass().getDeclaredField(n);
-            f.setAccessible(true);
-            return f.get(o);
+            Class<?> c = o.getClass();
+            while (c != null) {
+                try {
+                    Field f = c.getDeclaredField(n);
+                    f.setAccessible(true);
+                    return f.get(o);
+                } catch (NoSuchFieldException e) {
+                    c = c.getSuperclass();
+                }
+            }
         } catch (Throwable t) {
             return "<" + t.getClass().getSimpleName() + ">";
         }
+        return null;
+    }
+
+    private static String summarize(Object o) {
+        if (o == null) return "null";
+        if (o instanceof CharSequence || o instanceof Number || o instanceof Boolean) {
+            return String.valueOf(o);
+        }
+        return o.getClass().getSimpleName();
     }
 
     private static String className(Object o) {
