@@ -231,11 +231,11 @@ public final class MainHook implements IXposedHookLoadPackage {
                     try {
                         Object result = x.getResult();
                         if (result == null) return;
-                        Object hcv = processor == null ? null : findFieldInHierarchy(processor, "O");
-                        Object pinyin = hcv == null ? null : field(hcv, "b");
+                        Object candidateIndex = field(result, "m");
+                        String candidatePinyin = readCandidatePinyin(x.thisObject, candidateIndex);
                         XposedBridge.log(TAG + ": CANDIDATE text="
-                                + field(result, "a") + " index=" + field(result, "m")
-                                + " pinyin=" + join(pinyin));
+                                + field(result, "a") + " index=" + candidateIndex
+                                + " pinyin=" + candidatePinyin);
                     } catch (Throwable t) {
                         XposedBridge.log(TAG + ": candidate read failed: "
                                 + android.util.Log.getStackTraceString(t));
@@ -250,6 +250,51 @@ public final class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + ": exact candidate hook failed: "
                     + android.util.Log.getStackTraceString(t));
         }
+    }
+
+    private static String readCandidatePinyin(Object iterator, Object candidateIndex) {
+        if (!(candidateIndex instanceof Number) || iterator == null) return "null";
+        try {
+            Object engine = findFieldByTypeName(iterator, "HmmEngineInterfaceImpl");
+            if (engine == null) return "null";
+            int index = ((Number) candidateIndex).intValue();
+            Method countMethod = engine.getClass().getMethod("c", int.class);
+            int count = ((Number) countMethod.invoke(engine, index)).intValue();
+            if (count <= 0 || count > 64) return "null";
+            Method tokenMethod = engine.getClass().getMethod("i", int.class, int.class);
+            Method textMethod = engine.getClass().getMethod("u", long.class);
+            StringBuilder s = new StringBuilder();
+            for (int i = 0; i < count; i++) {
+                Object handle = tokenMethod.invoke(engine, index, i);
+                if (!(handle instanceof Number)) return "null";
+                Object token = textMethod.invoke(engine, ((Number) handle).longValue());
+                if (token == null) return "null";
+                if (s.length() > 0) s.append(' ');
+                s.append(token);
+            }
+            return s.toString();
+        } catch (Throwable t) {
+            return "<" + t.getClass().getSimpleName() + ">";
+        }
+    }
+
+    private static Object findFieldByTypeName(Object o, String simpleName) {
+        if (o == null) return null;
+        try {
+            Class<?> c = o.getClass();
+            while (c != null) {
+                for (Field f : c.getDeclaredFields()) {
+                    Class<?> type = f.getType();
+                    if (type != null && simpleName.equals(type.getSimpleName())) {
+                        f.setAccessible(true);
+                        return f.get(o);
+                    }
+                }
+                c = c.getSuperclass();
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 
     private static synchronized void ensureDb() {
