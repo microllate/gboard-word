@@ -1,7 +1,6 @@
 package com.microllate.gboardword;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -27,11 +26,7 @@ public final class MainHook implements IXposedHookLoadPackage {
                     @Override protected void beforeHookedMethod(MethodHookParam x) {
                         if (!Boolean.TRUE.equals(x.args[1])) return;
                         Object c = x.args[0];
-                        Object processor = x.thisObject;
                         XposedBridge.log(TAG + ": SELECTED candidate=" + field(c, "a"));
-                        Object hdl = field(processor, "B");
-                        Object state = field(hdl, "k");
-                        dump(state, "state");
                     }
                 });
                 hooked++;
@@ -51,26 +46,5 @@ public final class MainHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             return "<" + t.getClass().getSimpleName() + ">";
         }
-    }
-
-    private static void dump(Object o, String label) {
-        if (o == null) {
-            XposedBridge.log(TAG + ": " + label + "=null");
-            return;
-        }
-        Class<?> c = o.getClass();
-        StringBuilder s = new StringBuilder(TAG + ": " + label + " class=" + c.getName());
-        for (Field f : c.getDeclaredFields()) {
-            if (Modifier.isStatic(f.getModifiers())) continue;
-            try {
-                f.setAccessible(true);
-                s.append(" | ").append(f.getName()).append(":")
-                 .append(f.getType().getName()).append("=")
-                 .append(String.valueOf(f.get(o)));
-            } catch (Throwable e) {
-                s.append(" | ").append(f.getName()).append(":<error>");
-            }
-        }
-        XposedBridge.log(s.toString());
     }
 }
