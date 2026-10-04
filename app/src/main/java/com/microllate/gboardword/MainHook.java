@@ -31,21 +31,26 @@ public final class MainHook implements IXposedHookLoadPackage {
                         Object candidate = x.args[0];
                         Object text = field(candidate, "a");
                         Object index = field(candidate, "m");
-
-                        Object composing = findFieldInHierarchy(x.thisObject, "G");
                         Object learned = findFieldInHierarchy(x.thisObject, "O");
-                        Object selected = findFieldInHierarchy(x.thisObject, "U");
                         Object learnedFlag = findFieldInHierarchy(x.thisObject, "P");
-                        Object mHdl = findFieldInHierarchy(x.thisObject, "m");
 
                         XposedBridge.log(TAG
                                 + ": STATE candidate=" + text
                                 + " index=" + index
-                                + " G=" + composing
                                 + " O=" + summarize(learned)
-                                + " U=" + summarize(selected)
-                                + " P=" + learnedFlag
-                                + " m=" + className(mHdl));
+                                + " P=" + learnedFlag);
+
+                        if (learned != null && "hcv".equals(learned.getClass().getSimpleName())) {
+                            Object a = field(learned, "a");
+                            Object b = field(learned, "b");
+                            Object c = field(learned, "c");
+                            Object e = field(learned, "e");
+                            XposedBridge.log(TAG
+                                    + ": HCV a=" + summarizeValue(a)
+                                    + " b=" + summarizeValue(b)
+                                    + " c=" + summarizeValue(c)
+                                    + " e=" + summarizeValue(e));
+                        }
                     }
                 });
                 hooked++;
@@ -96,13 +101,22 @@ public final class MainHook implements IXposedHookLoadPackage {
 
     private static String summarize(Object o) {
         if (o == null) return "null";
-        if (o instanceof CharSequence || o instanceof Number || o instanceof Boolean) {
-            return String.valueOf(o);
-        }
         return o.getClass().getSimpleName();
     }
 
-    private static String className(Object o) {
-        return o == null ? "null" : o.getClass().getName();
+    private static String summarizeValue(Object o) {
+        if (o == null) return "null";
+        if (o.getClass().isArray()) {
+            if (o instanceof Object[]) return java.util.Arrays.deepToString((Object[]) o);
+            if (o instanceof int[]) return java.util.Arrays.toString((int[]) o);
+            if (o instanceof long[]) return java.util.Arrays.toString((long[]) o);
+            if (o instanceof boolean[]) return java.util.Arrays.toString((boolean[]) o);
+            if (o instanceof byte[]) return "byte[" + ((byte[]) o).length + "]";
+            if (o instanceof char[]) return java.util.Arrays.toString((char[]) o);
+            if (o instanceof short[]) return java.util.Arrays.toString((short[]) o);
+            if (o instanceof float[]) return java.util.Arrays.toString((float[]) o);
+            if (o instanceof double[]) return java.util.Arrays.toString((double[]) o);
+        }
+        return String.valueOf(o);
     }
 }
