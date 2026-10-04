@@ -1,6 +1,7 @@
 package com.microllate.gboardword;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -11,6 +12,7 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static final String TAG = "GboardWord";
     private static final String GBOARD = "com.google.android.inputmethod.latin";
     private static final String PROCESSOR = "com.google.android.apps.inputmethod.libs.chinese.ime.hmm.AbstractHmmChineseDecodeProcessor";
+    private static final String ENGINE = "com.google.android.apps.inputmethod.libs.hmm.HmmEngineInterfaceImpl";
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
@@ -18,29 +20,35 @@ public final class MainHook implements IXposedHookLoadPackage {
         try {
             Class<?> pc = XposedHelpers.findClass(PROCESSOR, p.classLoader);
             int hooked = 0;
-            for (java.lang.reflect.Method m : pc.getDeclaredMethods()) {
+            for (Method m : pc.getDeclaredMethods()) {
                 if (!"Z".equals(m.getName())) continue;
                 Class<?>[] ps = m.getParameterTypes();
                 if (ps.length != 2 || ps[1] != boolean.class) continue;
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override protected void beforeHookedMethod(MethodHookParam x) {
                         if (!Boolean.TRUE.equals(x.args[1])) return;
+
                         Object candidate = x.args[0];
                         Object text = field(candidate, "a");
-                        Object index = field(candidate, "m");
+                        Object indexObj = field(candidate, "m");
+                        if (!(indexObj instanceof Integer)) return;
+                        int index = (Integer) indexObj;
 
                         try {
-                            Object processor = x.thisObject;
-                            Object hdl = field(processor, "B");
+                            Object hdl = findFieldInHierarchy(x.thisObject, "B");
                             Object engine = findFieldInHierarchy(hdl, "j");
-                            XposedBridge.log(TAG + ": SELECTED candidate=" + text
+                            if (engine == null || !ENGINE.equals(engine.getClass().getName())) return;
+
+                            Method tokenMethod = engine.getClass().getMethod("i", int.class, int.class);
+                            Object token = tokenMethod.invoke(engine, index, 0);
+
+                            XposedBridge.log(TAG + ": TOKEN candidate=" + text
                                     + " index=" + index
-                                    + " hdl=" + className(hdl)
-                                    + " engine=" + className(engine));
+                                    + " token=" + token
+                                    + " tokenClass=" + className(token));
                         } catch (Throwable t) {
-                            XposedBridge.log(TAG + ": SELECTED candidate=" + text
-                                    + " index=" + index
-                                    + " engine=<" + t.getClass().getSimpleName() + ">");
+                            XposedBridge.log(TAG + ": TOKEN candidate=" + text
+                                    + " error=" + t.getClass().getSimpleName());
                         }
                     }
                 });
