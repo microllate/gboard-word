@@ -66,12 +66,13 @@ public final class MainHook implements IXposedHookLoadPackage {
             }
 
             Class<?> hc = XposedHelpers.findClass(HMM_PROCESSOR, p.classLoader);
-            Method aAMethod = hc.getDeclaredMethod("aA", int.class);
-            aAMethod.setAccessible(true);
-            XposedBridge.hookMethod(aAMethod, new XC_MethodHook() {
-                @Override protected void beforeHookedMethod(MethodHookParam x) {
+            Method aBMethod = hc.getDeclaredMethod("aB", boolean.class);
+            aBMethod.setAccessible(true);
+            XposedBridge.hookMethod(aBMethod, new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam x) {
                     Object iterator = field(x.thisObject, "d");
-                    XposedBridge.log(TAG + ": LIST inputCount=" + String.valueOf(x.args[0])
+                    XposedBridge.log(TAG + ": ITERATOR_READY result="
+                            + String.valueOf(x.getResult())
                             + " iterator=" + summarize(iterator));
                     if (!(iterator instanceof Iterator)) return;
 
@@ -103,7 +104,7 @@ public final class MainHook implements IXposedHookLoadPackage {
             });
 
             XposedBridge.log(TAG + ": hooked Z candidate selection methods=" + hooked);
-            XposedBridge.log(TAG + ": hooked aA candidate consumer");
+            XposedBridge.log(TAG + ": hooked aB candidate producer");
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": hook install failed: "
                     + android.util.Log.getStackTraceString(t));
