@@ -1,5 +1,6 @@
 package com.microllate.gboardword;
 
+import android.app.Application;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -12,11 +13,17 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static final String TAG = "GboardWord";
     private static final String GBOARD = "com.google.android.inputmethod.latin";
     private static final String PROCESSOR = "com.google.android.apps.inputmethod.libs.chinese.ime.hmm.AbstractHmmChineseDecodeProcessor";
+    private static PersonalDb db;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
         if (!GBOARD.equals(p.packageName)) return;
         try {
+            Application app = (Application) XposedHelpers.callStaticMethod(
+                    Class.forName("android.app.ActivityThread"),
+                    "currentApplication");
+            if (app != null) db = new PersonalDb(app);
+
             Class<?> pc = XposedHelpers.findClass(PROCESSOR, p.classLoader);
             int hooked = 0;
             for (Method m : pc.getDeclaredMethods()) {
@@ -37,12 +44,20 @@ public final class MainHook implements IXposedHookLoadPackage {
                             Object a = field(learned, "a");
                             Object b = field(learned, "b");
                             Object e = field(learned, "e");
+                            String phrase = a == null ? null : String.valueOf(a);
+                            String pinyin = join(b);
 
-                            XposedBridge.log(TAG
-                                    + ": SELECTED text=" + a
-                                    + " pinyin=" + join(b)
-                                    + " index=" + index
-                                    + " e=" + e);
+                            if (Boolean.TRUE.equals(e) && db != null && phrase != null
+                                    && !phrase.isEmpty() && b != null) {
+                                try {
+                                    db.record(pinyin, phrase);
+                                    XposedBridge.log(TAG + ": SAVED phrase=" + phrase
+                                            + " pinyin=" + pinyin);
+                                } catch (Throwable t) {
+                                    XposedBridge.log(TAG + ": DB save failed: "
+                                            + t.getClass().getSimpleName());
+                                }
+                            }
                         } else {
                             XposedBridge.log(TAG
                                     + ": SELECTED text=" + text
