@@ -1,6 +1,7 @@
 package com.microllate.gboardword;
 
 import android.content.Context;
+import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 
@@ -27,13 +28,19 @@ final class PersonalDb extends SQLiteOpenHelper {
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
     }
 
-    synchronized void record(String pinyin, String phrase) {
-        if (pinyin == null || phrase == null || pinyin.isEmpty() || phrase.isEmpty()) return;
+    synchronized int record(String pinyin, String phrase) {
+        if (pinyin == null || phrase == null || pinyin.isEmpty() || phrase.isEmpty()) return 0;
         SQLiteDatabase db = getWritableDatabase();
         db.execSQL(
                 "INSERT INTO words(pinyin, phrase, count, last_used) VALUES(?,?,1,?) " +
                 "ON CONFLICT(pinyin, phrase) DO UPDATE SET " +
                 "count=count+1,last_used=excluded.last_used",
                 new Object[]{pinyin, phrase, System.currentTimeMillis()});
+
+        try (Cursor c = db.rawQuery(
+                "SELECT count FROM words WHERE pinyin=? AND phrase=?",
+                new String[]{pinyin, phrase})) {
+            return c.moveToFirst() ? c.getInt(0) : 0;
+        }
     }
 }
