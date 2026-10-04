@@ -3,6 +3,7 @@ package com.microllate.gboardword;
 import android.app.Application;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Iterator;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -13,6 +14,7 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static final String TAG = "GboardWord";
     private static final String GBOARD = "com.google.android.inputmethod.latin";
     private static final String PROCESSOR = "com.google.android.apps.inputmethod.libs.chinese.ime.hmm.AbstractHmmChineseDecodeProcessor";
+    private static final String HMM_PROCESSOR = "com.google.android.apps.inputmethod.libs.hmm.AbstractHmmDecodeProcessor";
     private static PersonalDb db;
 
     @Override
@@ -66,7 +68,48 @@ public final class MainHook implements IXposedHookLoadPackage {
                 });
                 hooked++;
             }
+
+            Class<?> hc = XposedHelpers.findClass(HMM_PROCESSOR, p.classLoader);
+            Method bMethod = hc.getDeclaredMethod("B");
+            bMethod.setAccessible(true);
+            XposedBridge.hookMethod(bMethod, new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam x) {
+                    Object iterator = x.getResult();
+                    Object hdl = field(x.thisObject, "m");
+                    Object input = field(hdl, "d");
+                    XposedBridge.log(TAG + ": CANDIDATES input=" + String.valueOf(input)
+                            + " iterator=" + summarize(iterator));
+                    if (!(iterator instanceof Iterator)) return;
+
+                    final Iterator<?> original = (Iterator<?>) iterator;
+                    x.setResult(new Iterator<Object>() {
+                        private int logged;
+
+                        @Override public boolean hasNext() {
+                            return original.hasNext();
+                        }
+
+                        @Override public Object next() {
+                            Object candidate = original.next();
+                            if (logged < 8) {
+                                Object text = field(candidate, "a");
+                                Object index = field(candidate, "m");
+                                XposedBridge.log(TAG + ": CANDIDATE[" + logged + "] text="
+                                        + String.valueOf(text) + " index=" + String.valueOf(index));
+                                logged++;
+                            }
+                            return candidate;
+                        }
+
+                        @Override public void remove() {
+                            original.remove();
+                        }
+                    });
+                }
+            });
+
             XposedBridge.log(TAG + ": hooked Z candidate selection methods=" + hooked);
+            XposedBridge.log(TAG + ": hooked B candidate iterator");
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": hook install failed: " + android.util.Log.getStackTraceString(t));
         }
