@@ -116,8 +116,24 @@ public final class MainHook implements IXposedHookLoadPackage {
                     if (candidateHookInstalled) return;
                     try {
                         Object iterator = x.getResult();
-                        if (iterator == null) return;
-                        installCandidateHookExact(iterator.getClass());
+                        if (iterator == null) {
+                            XposedBridge.log(TAG + ": f() RETURN=null");
+                            return;
+                        }
+
+                        Class<?> rc = iterator.getClass();
+                        XposedBridge.log(TAG + ": f() RETURN class=" + rc.getName()
+                                + " superclass=" + (rc.getSuperclass() == null
+                                ? "null" : rc.getSuperclass().getName()));
+
+                        for (Method mm : rc.getDeclaredMethods()) {
+                            if ("a".equals(mm.getName())) {
+                                XposedBridge.log(TAG + ": f() RETURN method a "
+                                        + mm.toGenericString());
+                            }
+                        }
+
+                        installCandidateHookExact(rc);
                     } catch (Throwable t) {
                         XposedBridge.log(TAG + ": candidate discovery failed: "
                                 + android.util.Log.getStackTraceString(t));
