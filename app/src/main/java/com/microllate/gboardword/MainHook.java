@@ -3,6 +3,7 @@ package com.microllate.gboardword;
 import android.util.Log;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -21,25 +22,32 @@ public final class MainHook implements IXposedHookLoadPackage {
 
         try {
             ClassLoader cl = lpparam.classLoader;
-            final Class<?> oogClass = XposedHelpers.findClass("defpackage.oog", cl);
+            Class<?> processorClass = XposedHelpers.findClass(PROCESSOR, cl);
+            int hooked = 0;
 
-            XposedHelpers.findAndHookMethod(PROCESSOR, cl, "Z", oogClass, boolean.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            try {
-                                Object candidate = param.args[0];
-                                boolean flag = (Boolean) param.args[1];
-                                Object text = readField(candidate, "a");
-                                Object index = readField(candidate, "m");
-                                Log.i(TAG, "candidate selected: text=" + text + ", index=" + index + ", flag=" + flag);
-                            } catch (Throwable t) {
-                                XposedBridge.log(TAG + ": observation failed: " + Log.getStackTraceString(t));
-                            }
+            for (Method method : processorClass.getDeclaredMethods()) {
+                if (!"Z".equals(method.getName())) continue;
+                Class<?>[] params = method.getParameterTypes();
+                if (params.length != 2 || params[1] != boolean.class) continue;
+
+                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        try {
+                            Object candidate = param.args[0];
+                            boolean flag = (Boolean) param.args[1];
+                            Object text = readField(candidate, "a");
+                            Object index = readField(candidate, "m");
+                            Log.i(TAG, "candidate selected: text=" + text + ", index=" + index + ", flag=" + flag);
+                        } catch (Throwable t) {
+                            XposedBridge.log(TAG + ": observation failed: " + Log.getStackTraceString(t));
                         }
-                    });
+                    }
+                });
+                hooked++;
+            }
 
-            XposedBridge.log(TAG + ": hooked Gboard Chinese candidate selection");
+            XposedBridge.log(TAG + ": hooked Z candidate selection methods=" + hooked);
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": hook install failed: " + Log.getStackTraceString(t));
         }
