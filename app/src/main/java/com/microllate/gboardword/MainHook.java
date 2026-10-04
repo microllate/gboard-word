@@ -40,17 +40,21 @@ public final class MainHook implements IXposedHookLoadPackage {
                             if (engine == null || !ENGINE.equals(engine.getClass().getName())) return;
 
                             Method tokenMethod = engine.getClass().getMethod("i", int.class, int.class);
-                            Object token = tokenMethod.invoke(engine, index, 0);
+                            Method rangeMethod = engine.getClass().getMethod("p", long.class);
+                            Method candidateTokenMethod = engine.getClass().getMethod("i", int.class, int.class);
                             Method normalizedMethod = engine.getClass().getMethod("u", long.class);
-                            Method tokenStringMethod = engine.getClass().getMethod("v", long.class);
-                            Object normalized = normalizedMethod.invoke(engine, ((Long) token).longValue());
-                            Object tokenString = tokenStringMethod.invoke(engine, ((Long) token).longValue());
+                            Object candidateToken = candidateTokenMethod.invoke(engine, index, 0);
+                            Object range = rangeMethod.invoke(engine, ((Long) candidateToken).longValue());
 
-                            XposedBridge.log(TAG + ": TOKEN candidate=" + text
+                            Field startField = range.getClass().getField("startVertexIndex");
+                            Field endField = range.getClass().getField("endVertexIndex");
+                            int startVertex = startField.getInt(range);
+                            int endVertex = endField.getInt(range);
+
+                            XposedBridge.log(TAG + ": RANGE candidate=" + text
                                     + " index=" + index
-                                    + " token=" + token
-                                    + " normalized=" + normalized
-                                    + " tokenString=" + tokenString);
+                                    + " start=" + startVertex
+                                    + " end=" + endVertex);
                         } catch (Throwable t) {
                             XposedBridge.log(TAG + ": TOKEN candidate=" + text
                                     + " error=" + t.getClass().getSimpleName());
