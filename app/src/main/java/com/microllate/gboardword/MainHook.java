@@ -25,8 +25,23 @@ public final class MainHook implements IXposedHookLoadPackage {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override protected void beforeHookedMethod(MethodHookParam x) {
                         if (!Boolean.TRUE.equals(x.args[1])) return;
-                        Object c = x.args[0];
-                        XposedBridge.log(TAG + ": SELECTED candidate=" + field(c, "a"));
+                        Object candidate = x.args[0];
+                        Object text = field(candidate, "a");
+                        Object index = field(candidate, "m");
+
+                        try {
+                            Object processor = x.thisObject;
+                            Object hdl = field(processor, "B");
+                            Object engine = findFieldInHierarchy(hdl, "j");
+                            XposedBridge.log(TAG + ": SELECTED candidate=" + text
+                                    + " index=" + index
+                                    + " hdl=" + className(hdl)
+                                    + " engine=" + className(engine));
+                        } catch (Throwable t) {
+                            XposedBridge.log(TAG + ": SELECTED candidate=" + text
+                                    + " index=" + index
+                                    + " engine=<" + t.getClass().getSimpleName() + ">");
+                        }
                     }
                 });
                 hooked++;
@@ -35,6 +50,21 @@ public final class MainHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": hook install failed: " + android.util.Log.getStackTraceString(t));
         }
+    }
+
+    private static Object findFieldInHierarchy(Object o, String n) throws Exception {
+        if (o == null) return null;
+        Class<?> c = o.getClass();
+        while (c != null) {
+            try {
+                Field f = c.getDeclaredField(n);
+                f.setAccessible(true);
+                return f.get(o);
+            } catch (NoSuchFieldException e) {
+                c = c.getSuperclass();
+            }
+        }
+        return null;
     }
 
     private static Object field(Object o, String n) {
@@ -46,5 +76,9 @@ public final class MainHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             return "<" + t.getClass().getSimpleName() + ">";
         }
+    }
+
+    private static String className(Object o) {
+        return o == null ? "null" : o.getClass().getName();
     }
 }
