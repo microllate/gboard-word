@@ -108,7 +108,7 @@ public final class MainHook implements IXposedHookLoadPackage {
 
                                 Object iterator = x.getResult();
                                 if (iterator != null) {
-                                    installCandidateHookExact(iterator.getClass());
+                                    installCandidateHookExact(iterator.getClass(), processor);
                                 }
                             } catch (Throwable t) {
                                 XposedBridge.log(TAG + ": B() candidate discovery failed: "
@@ -196,6 +196,10 @@ public final class MainHook implements IXposedHookLoadPackage {
     }
 
     private static synchronized void installCandidateHookExact(Class<?> runtimeClass) {
+        installCandidateHookExact(runtimeClass, null);
+    }
+
+    private static synchronized void installCandidateHookExact(Class<?> runtimeClass, Object processor) {
         if (candidateHookInstalled || runtimeClass == null) return;
 
         try {
@@ -227,8 +231,11 @@ public final class MainHook implements IXposedHookLoadPackage {
                     try {
                         Object result = x.getResult();
                         if (result == null) return;
+                        Object hcv = processor == null ? null : findFieldInHierarchy(processor, "O");
+                        Object pinyin = hcv == null ? null : field(hcv, "b");
                         XposedBridge.log(TAG + ": CANDIDATE text="
-                                + field(result, "a") + " index=" + field(result, "m"));
+                                + field(result, "a") + " index=" + field(result, "m")
+                                + " pinyin=" + join(pinyin));
                     } catch (Throwable t) {
                         XposedBridge.log(TAG + ": candidate read failed: "
                                 + android.util.Log.getStackTraceString(t));
