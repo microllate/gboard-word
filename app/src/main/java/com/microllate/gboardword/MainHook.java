@@ -15,7 +15,8 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static final String GBOARD = "com.google.android.inputmethod.latin";
     private static final String PROCESSOR = "com.google.android.apps.inputmethod.libs.chinese.ime.hmm.AbstractHmmChineseDecodeProcessor";
     private static final String HMM_PROCESSOR = "com.google.android.apps.inputmethod.libs.hmm.AbstractHmmDecodeProcessor";
-    private static PersonalDb db;\n    private static boolean iteratorHookInstalled;
+    private static PersonalDb db;
+    private static boolean iteratorHookInstalled;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
@@ -34,7 +35,8 @@ public final class MainHook implements IXposedHookLoadPackage {
                         Object candidate = x.args[0];
                         Object text = field(candidate, "a");
                         Object index = field(candidate, "m");
-                        Object learned = findFieldInHierarchy(x.thisObject, "O");\n                        if (!iteratorHookInstalled) {
+                        Object learned = findFieldInHierarchy(x.thisObject, "O");
+                        if (!iteratorHookInstalled) {
                             Object hdl = findFieldInHierarchy(x.thisObject, "m");
                             if (hdl != null) {
                                 installIteratorHook(hdl.getClass());
