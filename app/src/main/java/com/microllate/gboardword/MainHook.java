@@ -94,28 +94,11 @@ public final class MainHook implements IXposedHookLoadPackage {
                     m.setAccessible(true);
                     XposedBridge.hookMethod(m, new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam x) {
-                            Object result = x.getResult();
-                            XposedBridge.log(TAG + ": F_RETURN class="
-                                    + x.thisObject.getClass().getName()
-                                    + " iterator=" + summarize(result));
-                            if (!(result instanceof Iterator)) return;
-                            final Iterator<?> original = (Iterator<?>) result;
-                            x.setResult(new Iterator<Object>() {
-                                private int logged;
-                                @Override public boolean hasNext() { return original.hasNext(); }
-                                @Override public Object next() {
-                                    Object candidate = original.next();
-                                    if (logged < 8) {
-                                        Object text = field(candidate, "a");
-                                        Object index = field(candidate, "m");
-                                        XposedBridge.log(TAG + ": LIST[" + logged + "] text="
-                                                + String.valueOf(text) + " index=" + String.valueOf(index));
-                                        logged++;
-                                    }
-                                    return candidate;
-                                }
-                                @Override public void remove() { original.remove(); }
-                            });
+                        Object result = x.getResult();
+                        XposedBridge.log(TAG + ": F_RETURN class="
+                                + x.thisObject.getClass().getName()
+                                + " iterator=" + summarize(result));
+                    }                    });
                         }
                     });
                     iteratorHookInstalled = true;
