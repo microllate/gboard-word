@@ -66,7 +66,7 @@ public final class MainHook implements IXposedHookLoadPackage {
             }
 
             Class<?> hctClass = XposedHelpers.findClass(
-                    "com.google.android.apps.inputmethod.libs.hmm.hct", p.classLoader);
+                    "defpackage.hct", p.classLoader);
             int iteratorHooks = 0;
             for (Method m : hctClass.getDeclaredMethods()) {
                 if (!"f".equals(m.getName()) || m.getParameterTypes().length != 0) continue;
