@@ -30,7 +30,8 @@ public final class MainHook implements IXposedHookLoadPackage {
                         Object processor = x.thisObject;
                         XposedBridge.log(TAG + ": SELECTED candidate=" + field(c, "a"));
                         Object hdl = field(processor, "B");
-                        dump(hdl, "hdl");
+                        Object state = field(hdl, "k");
+                        dump(state, "state");
                     }
                 });
                 hooked++;
