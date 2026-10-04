@@ -16,6 +16,7 @@ public final class MainHook implements IXposedHookLoadPackage {
             "com.google.android.apps.inputmethod.libs.chinese.ime.hmm.AbstractHmmChineseDecodeProcessor";
     private static boolean candidateHookInstalled;
     private static PersonalDb db;
+    private static Object candidateEngine;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
@@ -232,7 +233,7 @@ public final class MainHook implements IXposedHookLoadPackage {
                         Object result = x.getResult();
                         if (result == null) return;
                         Object candidateIndex = field(result, "m");
-                        String candidatePinyin = readCandidatePinyin(x.thisObject, candidateIndex);
+                        String candidatePinyin = readCandidatePinyin(processor, candidateIndex);
                         XposedBridge.log(TAG + ": CANDIDATE text="
                                 + field(result, "a") + " index=" + candidateIndex
                                 + " pinyin=" + candidatePinyin);
@@ -252,10 +253,18 @@ public final class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    private static String readCandidatePinyin(Object iterator, Object candidateIndex) {
-        if (!(candidateIndex instanceof Number) || iterator == null) return "null";
+    private static synchronized String readCandidatePinyin(Object processor, Object candidateIndex) {
+        if (!(candidateIndex instanceof Number) || processor == null) return "null";
         try {
-            Object engine = findFieldByTypeName(iterator, "HmmEngineInterfaceImpl");
+            Object engine = candidateEngine;
+            if (engine == null) {
+                engine = findObjectByTypeName(processor, "HmmEngineInterfaceImpl", 4);
+                if (engine == null) {
+                    Object hdl = findFieldInHierarchy(processor, "m");
+                    engine = findObjectByTypeName(hdl, "HmmEngineInterfaceImpl", 4);
+                }
+                if (engine != null) candidateEngine = engine;
+            }
             if (engine == null) return "null";
             int index = ((Number) candidateIndex).intValue();
             Method countMethod = engine.getClass().getMethod("c", int.class);
@@ -276,6 +285,42 @@ public final class MainHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             return "<" + t.getClass().getSimpleName() + ">";
         }
+    }
+
+    private static Object findObjectByTypeName(Object root, String simpleName, int maxDepth) {
+        if (root == null || maxDepth < 0) return null;
+        java.util.IdentityHashMap<Object, Boolean> seen = new java.util.IdentityHashMap<>();
+        return findObjectByTypeName(root, simpleName, maxDepth, seen);
+    }
+
+    private static Object findObjectByTypeName(
+            Object root, String simpleName, int depth, java.util.IdentityHashMap<Object, Boolean> seen) {
+        if (root == null || depth < 0) return null;
+        Class<?> rootClass = root.getClass();
+        if (simpleName.equals(rootClass.getSimpleName())) return root;
+        if (seen.put(root, Boolean.TRUE) != null) return null;
+
+        Class<?> c = rootClass;
+        while (c != null) {
+            for (Field f : c.getDeclaredFields()) {
+                int modifiers = f.getModifiers();
+                if (java.lang.reflect.Modifier.isStatic(modifiers)
+                        || f.getType().isPrimitive()
+                        || f.getType().isEnum()
+                        || f.getType() == String.class) {
+                    continue;
+                }
+                try {
+                    f.setAccessible(true);
+                    Object value = f.get(root);
+                    Object found = findObjectByTypeName(value, simpleName, depth - 1, seen);
+                    if (found != null) return found;
+                } catch (Throwable ignored) {
+                }
+            }
+            c = c.getSuperclass();
+        }
+        return null;
     }
 
     private static Object findFieldByTypeName(Object o, String simpleName) {
