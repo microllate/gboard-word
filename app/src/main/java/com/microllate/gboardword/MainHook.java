@@ -47,9 +47,9 @@ public final class MainHook implements IXposedHookLoadPackage {
                                 try {
                                     ensureDb();
                                     if (db != null) {
-                                        db.record(pinyin, phrase);
+                                        int count = db.record(pinyin, phrase);
                                         XposedBridge.log(TAG + ": SAVED phrase=" + phrase
-                                                + " pinyin=" + pinyin);
+                                                + " pinyin=" + pinyin + " count=" + count);
                                     }
                                 } catch (Throwable t) {
                                     XposedBridge.log(TAG + ": DB save failed: "
