@@ -1,10 +1,5 @@
 package com.microllate.gboardword;
 
-import android.util.Log;
-
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -25,23 +20,17 @@ public final class MainHook implements IXposedHookLoadPackage {
             Class<?> processorClass = XposedHelpers.findClass(PROCESSOR, cl);
             int hooked = 0;
 
-            for (Method method : processorClass.getDeclaredMethods()) {
+            for (java.lang.reflect.Method method : processorClass.getDeclaredMethods()) {
                 if (!"Z".equals(method.getName())) continue;
                 Class<?>[] params = method.getParameterTypes();
                 if (params.length != 2 || params[1] != boolean.class) continue;
 
                 XposedBridge.hookMethod(method, new XC_MethodHook() {
                     @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
-                        try {
-                            Object candidate = param.args[0];
-                            boolean flag = (Boolean) param.args[1];
-                            Object text = readField(candidate, "a");
-                            Object index = readField(candidate, "m");
-                            Log.i(TAG, "candidate selected: text=" + text + ", index=" + index + ", flag=" + flag);
-                        } catch (Throwable t) {
-                            XposedBridge.log(TAG + ": observation failed: " + Log.getStackTraceString(t));
-                        }
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        XposedBridge.log(TAG + ": Z() CALLED, arg0="
+                                + (param.args[0] == null ? "null" : param.args[0].getClass().getName())
+                                + ", arg1=" + param.args[1]);
                     }
                 });
                 hooked++;
@@ -49,14 +38,7 @@ public final class MainHook implements IXposedHookLoadPackage {
 
             XposedBridge.log(TAG + ": hooked Z candidate selection methods=" + hooked);
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": hook install failed: " + Log.getStackTraceString(t));
+            XposedBridge.log(TAG + ": hook install failed: " + android.util.Log.getStackTraceString(t));
         }
-    }
-
-    private static Object readField(Object obj, String name) throws Exception {
-        if (obj == null) return null;
-        Field f = obj.getClass().getDeclaredField(name);
-        f.setAccessible(true);
-        return f.get(obj);
     }
 }
