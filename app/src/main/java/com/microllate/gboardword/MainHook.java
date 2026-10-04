@@ -41,11 +41,16 @@ public final class MainHook implements IXposedHookLoadPackage {
 
                             Method tokenMethod = engine.getClass().getMethod("i", int.class, int.class);
                             Object token = tokenMethod.invoke(engine, index, 0);
+                            Method normalizedMethod = engine.getClass().getMethod("u", long.class);
+                            Method tokenStringMethod = engine.getClass().getMethod("v", long.class);
+                            Object normalized = normalizedMethod.invoke(engine, ((Long) token).longValue());
+                            Object tokenString = tokenStringMethod.invoke(engine, ((Long) token).longValue());
 
                             XposedBridge.log(TAG + ": TOKEN candidate=" + text
                                     + " index=" + index
                                     + " token=" + token
-                                    + " tokenClass=" + className(token));
+                                    + " normalized=" + normalized
+                                    + " tokenString=" + tokenString);
                         } catch (Throwable t) {
                             XposedBridge.log(TAG + ": TOKEN candidate=" + text
                                     + " error=" + t.getClass().getSimpleName());
