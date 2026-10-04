@@ -90,68 +90,94 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static synchronized void installCandidateHookFromF(Class<?> runtimeClass) {
         if (candidateHookInstalled || runtimeClass == null) return;
         try {
+            Method fMethod = null;
             Class<?> c = runtimeClass;
-            while (c != null) {
+            while (c != null && fMethod == null) {
                 for (Method m : c.getDeclaredMethods()) {
-                    if (!"f".equals(m.getName()) || m.getParameterTypes().length != 0) continue;
-                    if (!java.util.Iterator.class.isAssignableFrom(m.getReturnType())) continue;
-                    m.setAccessible(true);
-                    XposedBridge.hookMethod(m, new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam x) {
-                            try {
-                                Object iterator = x.getResult();
-                                if (iterator != null) installCandidateHook(iterator.getClass());
-                            } catch (Throwable t) {
-                                XposedBridge.log(TAG + ": f() read failed: "
-                                        + android.util.Log.getStackTraceString(t));
-                            }
-                        }
-                    });
-                    XposedBridge.log(TAG + ": hooked hdl.f() class=" + c.getName());
-                    return;
+                    if ("f".equals(m.getName())
+                            && m.getParameterTypes().length == 0
+                            && java.util.Iterator.class.isAssignableFrom(m.getReturnType())) {
+                        fMethod = m;
+                        break;
+                    }
                 }
                 c = c.getSuperclass();
             }
-            XposedBridge.log(TAG + ": hdl.f() not found class=" + runtimeClass.getName());
+
+            if (fMethod == null) {
+                XposedBridge.log(TAG + ": hdl.f() not found; no candidate hook installed");
+                return;
+            }
+
+            fMethod.setAccessible(true);
+            XposedBridge.hookMethod(fMethod, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam x) {
+                    if (candidateHookInstalled) return;
+                    try {
+                        Object iterator = x.getResult();
+                        if (iterator == null) return;
+                        installCandidateHookExact(iterator.getClass());
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": candidate discovery failed: "
+                                + android.util.Log.getStackTraceString(t));
+                    }
+                }
+            });
+
+            XposedBridge.log(TAG + ": hooked hdl.f() class=" + fMethod.getDeclaringClass().getName());
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": f() hook failed: "
+            XposedBridge.log(TAG + ": hdl.f() hook failed: "
                     + android.util.Log.getStackTraceString(t));
         }
     }
 
-    private static synchronized void installCandidateHook(Class<?> runtimeClass) {
+    private static synchronized void installCandidateHookExact(Class<?> runtimeClass) {
         if (candidateHookInstalled || runtimeClass == null) return;
+
         try {
+            Method target = null;
             Class<?> c = runtimeClass;
-            while (c != null) {
+
+            while (c != null && target == null) {
                 for (Method m : c.getDeclaredMethods()) {
-                    if (!"a".equals(m.getName()) || m.getParameterTypes().length != 0) continue;
-                    if (!"oog".equals(m.getReturnType().getSimpleName())) continue;
-                    m.setAccessible(true);
-                    XposedBridge.hookMethod(m, new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam x) {
-                            try {
-                                Object result = x.getResult();
-                                if (result == null) return;
-                                XposedBridge.log(TAG + ": CANDIDATE text="
-                                        + field(result, "a") + " index=" + field(result, "m"));
-                            } catch (Throwable t) {
-                                XposedBridge.log(TAG + ": candidate read failed: "
-                                        + android.util.Log.getStackTraceString(t));
-                            }
-                        }
-                    });
-                    candidateHookInstalled = true;
-                    XposedBridge.log(TAG + ": hooked candidate a() class=" + c.getName());
-                    return;
+                    if ("a".equals(m.getName())
+                            && m.getParameterTypes().length == 0
+                            && "oog".equals(m.getReturnType().getName())) {
+                        target = m;
+                        break;
+                    }
                 }
                 c = c.getSuperclass();
             }
-            XposedBridge.log(TAG + ": candidate a() not found class=" + runtimeClass.getName());
+
+            if (target == null) {
+                XposedBridge.log(TAG + ": exact hdb.a()Loog; not found on "
+                        + runtimeClass.getName() + "; NO mutation performed");
+                return;
+            }
+
+            target.setAccessible(true);
+            XposedBridge.hookMethod(target, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam x) {
+                    try {
+                        Object result = x.getResult();
+                        if (result == null) return;
+                        XposedBridge.log(TAG + ": CANDIDATE text="
+                                + field(result, "a") + " index=" + field(result, "m"));
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": candidate read failed: "
+                                + android.util.Log.getStackTraceString(t));
+                    }
+                }
+            });
+
+            candidateHookInstalled = true;
+            XposedBridge.log(TAG + ": hooked EXACT candidate method="
+                    + target.getDeclaringClass().getName() + ".a()Loog;");
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": candidate hook failed: "
+            XposedBridge.log(TAG + ": exact candidate hook failed: "
                     + android.util.Log.getStackTraceString(t));
         }
     }
