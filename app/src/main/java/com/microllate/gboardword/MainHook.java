@@ -78,6 +78,48 @@ public final class MainHook implements IXposedHookLoadPackage {
                 hooked++;
             }
 
+            // B() is the actual candidate-iterator entry point. It runs before Z(),
+            // so hook its returned hdb instead of waiting for candidate selection.
+            try {
+                Method bMethod = null;
+                Class<?> c = pc;
+                while (c != null && bMethod == null) {
+                    for (Method m : c.getDeclaredMethods()) {
+                        if ("B".equals(m.getName())
+                                && m.getParameterTypes().length == 0
+                                && java.util.Iterator.class.isAssignableFrom(m.getReturnType())) {
+                            bMethod = m;
+                            break;
+                        }
+                    }
+                    c = c.getSuperclass();
+                }
+
+                if (bMethod != null) {
+                    bMethod.setAccessible(true);
+                    XposedBridge.hookMethod(bMethod, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam x) {
+                            try {
+                                Object iterator = x.getResult();
+                                if (iterator != null) {
+                                    installCandidateHookExact(iterator.getClass());
+                                }
+                            } catch (Throwable t) {
+                                XposedBridge.log(TAG + ": B() candidate discovery failed: "
+                                        + android.util.Log.getStackTraceString(t));
+                            }
+                        }
+                    });
+                    XposedBridge.log(TAG + ": hooked B() candidate iterator entry");
+                } else {
+                    XposedBridge.log(TAG + ": B() not found; candidate hook disabled");
+                }
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + ": B() hook failed: "
+                        + android.util.Log.getStackTraceString(t));
+            }
+
             XposedBridge.log(TAG + ": Z hook ready; candidate a() will be read-only hooked");
             XposedBridge.log(TAG + ": hooked Z candidate selection methods=" + hooked);
 
