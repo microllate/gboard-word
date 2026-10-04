@@ -65,43 +65,49 @@ public final class MainHook implements IXposedHookLoadPackage {
                 hooked++;
             }
 
-            Class<?> hc = XposedHelpers.findClass(HMM_PROCESSOR, p.classLoader);
-            Method aBMethod = hc.getDeclaredMethod("aB", boolean.class);
-            aBMethod.setAccessible(true);
-            XposedBridge.hookMethod(aBMethod, new XC_MethodHook() {
-                @Override protected void afterHookedMethod(MethodHookParam x) {
-                    Object iterator = field(x.thisObject, "d");
-                    XposedBridge.log(TAG + ": ITERATOR_READY result="
-                            + String.valueOf(x.getResult())
-                            + " iterator=" + summarize(iterator));
-                    if (!(iterator instanceof Iterator)) return;
+            Class<?> hctClass = XposedHelpers.findClass(
+                    "com.google.android.apps.inputmethod.libs.hmm.hct", p.classLoader);
+            int iteratorHooks = 0;
+            for (Method m : hctClass.getDeclaredMethods()) {
+                if (!"f".equals(m.getName()) || m.getParameterTypes().length != 0) continue;
+                if (!Iterator.class.isAssignableFrom(m.getReturnType())) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override protected void afterHookedMethod(MethodHookParam x) {
+                        Object result = x.getResult();
+                        XposedBridge.log(TAG + ": F_RETURN iterator=" + summarize(result));
+                        if (!(result instanceof Iterator)) return;
 
-                    final Iterator<?> original = (Iterator<?>) iterator;
-                    fieldSet(x.thisObject, "d", new Iterator<Object>() {
-                        private int logged;
+                        final Iterator<?> original = (Iterator<?>) result;
+                        x.setResult(new Iterator<Object>() {
+                            private int logged;
 
-                        @Override public boolean hasNext() {
-                            return original.hasNext();
-                        }
-
-                        @Override public Object next() {
-                            Object candidate = original.next();
-                            if (logged < 8) {
-                                Object text = field(candidate, "a");
-                                Object index = field(candidate, "m");
-                                XposedBridge.log(TAG + ": LIST[" + logged + "] text="
-                                        + String.valueOf(text) + " index=" + String.valueOf(index));
-                                logged++;
+                            @Override public boolean hasNext() {
+                                return original.hasNext();
                             }
-                            return candidate;
-                        }
 
-                        @Override public void remove() {
-                            original.remove();
-                        }
-                    });
-                }
-            });
+                            @Override public Object next() {
+                                Object candidate = original.next();
+                                if (logged < 8) {
+                                    Object text = field(candidate, "a");
+                                    Object index = field(candidate, "m");
+                                    XposedBridge.log(TAG + ": LIST[" + logged + "] text="
+                                            + String.valueOf(text) + " index=" + String.valueOf(index));
+                                    logged++;
+                                }
+                                return candidate;
+                            }
+
+                            @Override public void remove() {
+                                original.remove();
+                            }
+                        });
+                    }
+                });
+                iteratorHooks++;
+            }
+
+            XposedBridge.log(TAG + ": hooked hct.f iterator methods=" + iteratorHooks);
 
             XposedBridge.log(TAG + ": hooked Z candidate selection methods=" + hooked);
             XposedBridge.log(TAG + ": hooked aB candidate producer");
