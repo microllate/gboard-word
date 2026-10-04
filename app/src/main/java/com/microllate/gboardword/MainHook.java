@@ -40,17 +40,30 @@ public final class MainHook implements IXposedHookLoadPackage {
                             if (engine == null || !ENGINE.equals(engine.getClass().getName())) return;
 
                             Method tokenMethod = engine.getClass().getMethod("i", int.class, int.class);
-                            Object token = tokenMethod.invoke(engine, index, 0);
                             Method normalizedMethod = engine.getClass().getMethod("u", long.class);
                             Method tokenStringMethod = engine.getClass().getMethod("v", long.class);
-                            Object normalized = normalizedMethod.invoke(engine, ((Long) token).longValue());
-                            Object tokenString = tokenStringMethod.invoke(engine, ((Long) token).longValue());
+                            StringBuilder tokens = new StringBuilder();
 
-                            XposedBridge.log(TAG + ": TOKEN candidate=" + text
+                            for (int tokenIndex = 0; tokenIndex < 32; tokenIndex++) {
+                                try {
+                                    Object token = tokenMethod.invoke(engine, index, tokenIndex);
+                                    if (!(token instanceof Long)) break;
+                                    long tokenHandle = ((Long) token).longValue();
+                                    Object normalized = normalizedMethod.invoke(engine, tokenHandle);
+                                    Object tokenString = tokenStringMethod.invoke(engine, tokenHandle);
+                                    if (tokenIndex > 0) tokens.append("|");
+                                    tokens.append(normalized);
+                                    if (tokenString != null && !String.valueOf(tokenString).equals(String.valueOf(normalized))) {
+                                        tokens.append("(").append(tokenString).append(")");
+                                    }
+                                } catch (Throwable ignored) {
+                                    break;
+                                }
+                            }
+
+                            XposedBridge.log(TAG + ": TOKENS candidate=" + text
                                     + " index=" + index
-                                    + " token=" + token
-                                    + " normalized=" + normalized
-                                    + " tokenString=" + tokenString);
+                                    + " tokens=" + tokens);
                         } catch (Throwable t) {
                             XposedBridge.log(TAG + ": TOKEN candidate=" + text
                                     + " error=" + t.getClass().getSimpleName());
