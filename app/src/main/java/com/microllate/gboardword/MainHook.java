@@ -20,8 +20,7 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static final String GBOARD = "com.google.android.inputmethod.latin";
     private static final String PROCESSOR =
             "com.google.android.apps.inputmethod.libs.chinese.ime.hmm.AbstractHmmChineseDecodeProcessor";
-    private static final String PERSONAL_DICTIONARY_IMPORTER =
-            "com.google.android.libraries.inputmethod.personaldictionary.PersonalDictionaryImporter";
+    private static final String PERSONAL_DICTIONARY_IMPORTER = "qhm";
     private static final String PERSONAL_DICTIONARY_DB = "qhf";
 
     @Override
