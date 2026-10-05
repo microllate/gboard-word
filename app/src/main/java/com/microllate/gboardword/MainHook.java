@@ -154,12 +154,73 @@ public final class MainHook implements IXposedHookLoadPackage {
 
     private static synchronized void saveToGboardDictionary(
             Object processor, Object hdl, Object tokens, Object types, String phrase) {
-        // Safety stop: the first MutableDictionaryAccessorImpl we found was
-        // Gboard's contacts dictionary (contacts_dict_3_3), not user_dict_3_3.
-        // Do not mutate any dictionary until the correct personal-dictionary
-        // accessor has been identified.
-        XposedBridge.log(TAG + ": DICT-SAVE DISABLED phrase=" + phrase
-                + " pinyin=" + join(tokens));
+        // AbstractHmmChineseDecodeProcessor's field f is Gboard's own
+        // Chinese user-dictionary provider. Its a() method returns the
+        // MutableDictionaryAccessorImpl backed by user_dict_3_3.
+        try {
+            Object provider = findFieldInHierarchy(processor, "f");
+            if (provider == null) {
+                XposedBridge.log(TAG + ": USER-DICT provider f=null; save skipped");
+                return;
+            }
+
+            Method accessorMethod = null;
+            Class<?> c = provider.getClass();
+            while (c != null && accessorMethod == null) {
+                for (Method m : c.getDeclaredMethods()) {
+                    if ("a".equals(m.getName())
+                            && m.getParameterTypes().length == 0) {
+                        accessorMethod = m;
+                        break;
+                    }
+                }
+                c = c.getSuperclass();
+            }
+
+            if (accessorMethod == null) {
+                XposedBridge.log(TAG + ": USER-DICT f.a() not found; save skipped");
+                return;
+            }
+
+            accessorMethod.setAccessible(true);
+            Object accessor = accessorMethod.invoke(provider);
+            if (accessor == null) {
+                XposedBridge.log(TAG + ": USER-DICT f.a() returned null; save skipped");
+                return;
+            }
+
+            Method insert = null;
+            c = accessor.getClass();
+            while (c != null && insert == null) {
+                for (Method m : c.getDeclaredMethods()) {
+                    Class<?>[] ps = m.getParameterTypes();
+                    if ("b".equals(m.getName())
+                            && ps.length == 4
+                            && ps[0] == String[].class
+                            && ps[1] == int[].class
+                            && ps[2] == String.class
+                            && ps[3] == boolean.class) {
+                        insert = m;
+                        break;
+                    }
+                }
+                c = c.getSuperclass();
+            }
+
+            if (insert == null) {
+                XposedBridge.log(TAG + ": USER-DICT b(String[],int[],String,boolean) not found; save skipped");
+                return;
+            }
+
+            insert.setAccessible(true);
+            insert.invoke(accessor, tokens, types, phrase, true);
+            XposedBridge.log(TAG + ": GBOARD-USER-DICT-SAVED phrase=" + phrase
+                    + " pinyin=" + join(tokens)
+                    + " accessor=" + accessor.getClass().getName());
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": USER-DICT save failed: "
+                    + android.util.Log.getStackTraceString(t));
+        }
     }
 
     private static synchronized void installDictionaryAccessorDiagnostics(Object accessor) {
