@@ -3,6 +3,8 @@ package com.microllate.gboardword;
 import android.app.Application;
 import android.content.ContentResolver;
 import android.content.ContentValues;
+import android.content.Intent;
+import android.app.Activity;
 import android.net.Uri;
 import android.provider.MediaStore;
 import java.io.OutputStream;
@@ -19,12 +21,26 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static final String GBOARD = "com.google.android.inputmethod.latin";
     private static final String PROCESSOR =
             "com.google.android.apps.inputmethod.libs.chinese.ime.hmm.AbstractHmmChineseDecodeProcessor";
+    private static final String PERSONAL_DICTIONARY_FRAGMENT =
+            "com.google.android.libraries.inputmethod.personaldictionary.preference.PersonalDictionaryWordsFragment";
+
+    private static volatile Object personalDictionaryFragment;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
         if (!GBOARD.equals(p.packageName)) return;
 
         try {
+            Class<?> fragmentClass = XposedHelpers.findClass(
+                    PERSONAL_DICTIONARY_FRAGMENT, p.classLoader);
+            XposedHelpers.findAndHookConstructor(fragmentClass, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam x) {
+                    personalDictionaryFragment = x.thisObject;
+                    XposedBridge.log(TAG + ": PersonalDictionaryWordsFragment ready");
+                }
+            });
+
             Class<?> pc = XposedHelpers.findClass(PROCESSOR, p.classLoader);
             int hooked = 0;
 
@@ -63,7 +79,10 @@ public final class MainHook implements IXposedHookLoadPackage {
                             XposedBridge.log(TAG + ": SELECT phrase=" + phrase
                                     + " pinyin=" + pinyin);
 
-                            generateDictionaryTxt(phrase, pinyin);
+                            Uri uri = generateDictionaryTxt(phrase, pinyin);
+                            if (uri != null) {
+                                importDictionaryThroughGboard(uri);
+                            }
                         } catch (Throwable t) {
                             XposedBridge.log(TAG + ": SELECT failed: "
                                     + t.getClass().getSimpleName() + ": "
@@ -83,10 +102,10 @@ public final class MainHook implements IXposedHookLoadPackage {
 
     /**
      * Generate the exact TXT format accepted by Gboard's Personal Dictionary
-     * importer. For this test build we deliberately do NOT call Gboard's
-     * internal importer; the generated file is imported manually from the UI.
+     * importer and return the same content Uri that a file picker would give
+     * to Gboard.
      */
-    private static synchronized void generateDictionaryTxt(
+    private static synchronized Uri generateDictionaryTxt(
             String phrase, String pinyin) {
         try {
             Application app = (Application) XposedHelpers.callStaticMethod(
@@ -94,7 +113,7 @@ public final class MainHook implements IXposedHookLoadPackage {
                     "currentApplication");
             if (app == null) {
                 XposedBridge.log(TAG + ": TXT failed: application=null");
-                return;
+                return null;
             }
 
             String dictionaryText =
@@ -126,8 +145,53 @@ public final class MainHook implements IXposedHookLoadPackage {
                     + "Download/GboardWord/gboard_word_dictionary.txt"
                     + " phrase=" + phrase
                     + " shortcut=" + pinyin);
+            return uri;
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": TXT FAILED "
+                    + t.getClass().getSimpleName() + ": "
+                    + String.valueOf(t.getMessage()));
+            return null;
+        }
+    }
+
+    /**
+     * Re-enter Gboard's own Personal Dictionary import result handler.
+     * This is the same X(2, RESULT_OK, intent) path used after the manual
+     * document picker returns a selected TXT file.
+     */
+    private static void importDictionaryThroughGboard(Uri uri) {
+        Object fragment = personalDictionaryFragment;
+        if (fragment == null) {
+            XposedBridge.log(TAG + ": IMPORT skipped: PersonalDictionaryWordsFragment not ready");
+            return;
+        }
+
+        try {
+            Intent intent = new Intent();
+            intent.setData(uri);
+
+            Method method = null;
+            Class<?> c = fragment.getClass();
+            while (c != null && method == null) {
+                try {
+                    method = c.getDeclaredMethod(
+                            "X", int.class, int.class, Intent.class);
+                } catch (NoSuchMethodException e) {
+                    c = c.getSuperclass();
+                }
+            }
+
+            if (method == null) {
+                throw new NoSuchMethodException("X(int,int,Intent)");
+            }
+
+            method.setAccessible(true);
+            method.invoke(fragment, 2, Activity.RESULT_OK, intent);
+
+            XposedBridge.log(TAG + ": IMPORT dispatched through PersonalDictionaryWordsFragment.X"
+                    + " uri=" + uri);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": IMPORT FAILED "
                     + t.getClass().getSimpleName() + ": "
                     + String.valueOf(t.getMessage()));
         }
