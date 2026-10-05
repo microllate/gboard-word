@@ -18,7 +18,7 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static PersonalDb db;
     private static Object candidateEngine;
     private static final java.util.Set<String> dictionaryDiagnosticHooks =
-            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<String, Boolean>());
+            new java.util.HashSet<String>();
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
