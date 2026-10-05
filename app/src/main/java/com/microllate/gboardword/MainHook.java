@@ -79,7 +79,7 @@ public final class MainHook implements IXposedHookLoadPackage {
                                     && !phrase.isEmpty()
                                     && b != null) {
                                 try {
-                                    importToGboardPersonalDictionary(p.thisClass.getClassLoader(), b, phrase);
+                                    importToGboardPersonalDictionary(x.thisObject.getClass().getClassLoader(), b, phrase);
 
                                     ensureDb();
                                     if (db != null) {
