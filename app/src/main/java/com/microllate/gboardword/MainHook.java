@@ -4,7 +4,6 @@ import android.app.Application;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Intent;
-import android.app.Activity;
 import android.net.Uri;
 import android.provider.MediaStore;
 import java.io.OutputStream;
@@ -21,26 +20,16 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static final String GBOARD = "com.google.android.inputmethod.latin";
     private static final String PROCESSOR =
             "com.google.android.apps.inputmethod.libs.chinese.ime.hmm.AbstractHmmChineseDecodeProcessor";
-    private static final String PERSONAL_DICTIONARY_FRAGMENT =
-            "com.google.android.libraries.inputmethod.personaldictionary.preference.PersonalDictionaryWordsFragment";
-
-    private static volatile Object personalDictionaryFragment;
+    private static final String PERSONAL_DICTIONARY_IMPORTER =
+            "com.google.android.libraries.inputmethod.personaldictionary.PersonalDictionaryImporter";
+    private static final String PERSONAL_DICTIONARY_DB =
+            "com.google.android.libraries.inputmethod.personaldictionary.qhf";
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
         if (!GBOARD.equals(p.packageName)) return;
 
         try {
-            Class<?> fragmentClass = XposedHelpers.findClass(
-                    PERSONAL_DICTIONARY_FRAGMENT, p.classLoader);
-            XposedHelpers.findAndHookConstructor(fragmentClass, new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam x) {
-                    personalDictionaryFragment = x.thisObject;
-                    XposedBridge.log(TAG + ": PersonalDictionaryWordsFragment ready");
-                }
-            });
-
             Class<?> pc = XposedHelpers.findClass(PROCESSOR, p.classLoader);
             int hooked = 0;
 
@@ -155,45 +144,49 @@ public final class MainHook implements IXposedHookLoadPackage {
     }
 
     /**
-     * Re-enter Gboard's own Personal Dictionary import result handler.
-     * This is the same X(2, RESULT_OK, intent) path used after the manual
-     * document picker returns a selected TXT file.
+     * Run Gboard's own PersonalDictionaryImporter core directly. The UI
+     * fragment is only the front-end; qhm parses the TXT and qhf persists
+     * the resulting qgw entry into PersonalDictionary.db.
      */
     private static void importDictionaryThroughGboard(Uri uri) {
-        Object fragment = personalDictionaryFragment;
-        if (fragment == null) {
-            XposedBridge.log(TAG + ": IMPORT skipped: PersonalDictionaryWordsFragment not ready");
-            return;
-        }
-
         try {
-            Intent intent = new Intent();
-            intent.setData(uri);
+            Application app = (Application) XposedHelpers.callStaticMethod(
+                    Class.forName("android.app.ActivityThread"),
+                    "currentApplication");
+            if (app == null) {
+                throw new IllegalStateException("application=null");
+            }
 
-            Method method = null;
-            Class<?> c = fragment.getClass();
-            while (c != null && method == null) {
-                try {
-                    method = c.getDeclaredMethod(
-                            "X", int.class, int.class, Intent.class);
-                } catch (NoSuchMethodException e) {
-                    c = c.getSuperclass();
+            ClassLoader loader = app.getClassLoader();
+            Class<?> dbClass = XposedHelpers.findClass(PERSONAL_DICTIONARY_DB, loader);
+            Object db = dbClass.getConstructor(android.content.Context.class).newInstance(app);
+
+            Class<?> importerClass = XposedHelpers.findClass(PERSONAL_DICTIONARY_IMPORTER, loader);
+            Object importer = importerClass.getConstructor(
+                    Class.forName(
+                            "com.google.android.libraries.inputmethod.personaldictionary.qhc",
+                            false, loader)).newInstance(db);
+
+            try (java.io.InputStream in = app.getContentResolver().openInputStream(uri)) {
+                if (in == null) {
+                    throw new IllegalStateException("openInputStream returned null");
                 }
+
+                Method importMethod = importerClass.getDeclaredMethod(
+                        "a", java.io.InputStream.class, String.class);
+                importMethod.setAccessible(true);
+                Object result = importMethod.invoke(importer, in, "text/plain");
+
+                XposedBridge.log(TAG + ": IMPORT dispatched through Gboard PersonalDictionaryImporter"
+                        + " result=" + String.valueOf(result));
             }
-
-            if (method == null) {
-                throw new NoSuchMethodException("X(int,int,Intent)");
-            }
-
-            method.setAccessible(true);
-            method.invoke(fragment, 2, Activity.RESULT_OK, intent);
-
-            XposedBridge.log(TAG + ": IMPORT dispatched through PersonalDictionaryWordsFragment.X"
-                    + " uri=" + uri);
         } catch (Throwable t) {
+            Throwable cause = t instanceof java.lang.reflect.InvocationTargetException
+                    && ((java.lang.reflect.InvocationTargetException) t).getCause() != null
+                    ? ((java.lang.reflect.InvocationTargetException) t).getCause() : t;
             XposedBridge.log(TAG + ": IMPORT FAILED "
-                    + t.getClass().getSimpleName() + ": "
-                    + String.valueOf(t.getMessage()));
+                    + cause.getClass().getSimpleName() + ": "
+                    + String.valueOf(cause.getMessage()));
         }
     }
 
