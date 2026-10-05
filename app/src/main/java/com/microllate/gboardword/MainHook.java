@@ -212,6 +212,12 @@ public final class MainHook implements IXposedHookLoadPackage {
             }
 
             insert.setAccessible(true);
+
+            // Trace only after resolving Gboard's real user_dict_3_3 accessor.
+            // This lets us see what c() actually does and which native API
+            // persists the entry, instead of assuming c() is the editor API.
+            installDictionaryAccessorDiagnostics(accessor);
+
             insert.invoke(accessor, tokens, types, phrase);
             XposedBridge.log(TAG + ": GBOARD-USER-DICT-SAVED phrase=" + phrase
                     + " pinyin=" + join(tokens)
