@@ -88,9 +88,9 @@ public final class MainHook implements IXposedHookLoadPackage {
      * Build the exact TXT content accepted by Gboard's Personal Dictionary importer.
      */
     private static String buildDictionaryText(String phrase, String pinyin) {
-        return "# Gboard Dictionary version:2\\n"
-                + "# Gboard Dictionary format:shortcut\\tword\\tlanguage_tag\\tpos_tag\\n"
-                + pinyin + "\\t" + phrase + "\\tzh-CN\\t\\n";
+        return "# Gboard Dictionary version:2\n"
+                + "# Gboard Dictionary format:shortcut\tword\tlanguage_tag\tpos_tag\n"
+                + pinyin + "\t" + phrase + "\tzh-CN\t\n";
     }
 
     /**
