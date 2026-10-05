@@ -18,6 +18,8 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static boolean candidateHookInstalled;
     private static boolean nativeTraceInstalled;
     private static boolean shortcutTraceInstalled;
+    private static boolean personalDictionaryHookInstalled;
+    private static Object personalDictionaryFragment;
     private static PersonalDb db;
     private static Object candidateEngine;
     @Override
@@ -25,6 +27,7 @@ public final class MainHook implements IXposedHookLoadPackage {
         if (!GBOARD.equals(p.packageName)) return;
 
         try {
+            installPersonalDictionaryFragmentHook(p.classLoader);
             installShortcutTraceAtStartup(p.classLoader);
             Class<?> pc = XposedHelpers.findClass(PROCESSOR, p.classLoader);
             int hooked = 0;
@@ -148,6 +151,63 @@ public final class MainHook implements IXposedHookLoadPackage {
 
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": hook install failed: "
+                    + android.util.Log.getStackTraceString(t));
+        }
+    }
+
+
+    private static synchronized void installPersonalDictionaryFragmentHook(ClassLoader loader) {
+        if (personalDictionaryHookInstalled) return;
+        try {
+            Class<?> clazz = XposedHelpers.findClass(
+                    "com.google.android.libraries.inputmethod.personaldictionary.preference.PersonalDictionaryWordsFragment",
+                    loader);
+            Method target = null;
+            Class<?> c = clazz;
+            while (c != null && target == null) {
+                for (Method m : c.getDeclaredMethods()) {
+                    if ("J".equals(m.getName())
+                            && m.getParameterTypes().length == 3
+                            && m.getParameterTypes()[0] == android.view.LayoutInflater.class
+                            && m.getParameterTypes()[1] == android.view.ViewGroup.class
+                            && m.getParameterTypes()[2] == android.os.Bundle.class) {
+                        target = m;
+                        break;
+                    }
+                }
+                c = c.getSuperclass();
+            }
+            if (target == null) {
+                XposedBridge.log(TAG + ": PersonalDictionaryWordsFragment.J() not found");
+                return;
+            }
+            target.setAccessible(true);
+            XposedBridge.hookMethod(target, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam x) {
+                    try {
+                        Object fragment = x.thisObject;
+                        Object qhc = findFieldInHierarchy(fragment, "d");
+                        Object car = findFieldInHierarchy(fragment, "a");
+                        if (qhc != null && car != null) {
+                            personalDictionaryFragment = fragment;
+                            XposedBridge.log(TAG + ": PERSONAL-DICT fragment ready qhc="
+                                    + qhc.getClass().getName() + " car=" + car.getClass().getName());
+                        } else {
+                            XposedBridge.log(TAG + ": PERSONAL-DICT fragment not ready qhc="
+                                    + (qhc == null ? "null" : qhc.getClass().getName())
+                                    + " car=" + (car == null ? "null" : car.getClass().getName()));
+                        }
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": PERSONAL-DICT fragment hook failed: "
+                                + android.util.Log.getStackTraceString(t));
+                    }
+                }
+            });
+            personalDictionaryHookInstalled = true;
+            XposedBridge.log(TAG + ": PERSONAL-DICT J() hook installed");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": PERSONAL-DICT hook install failed: "
                     + android.util.Log.getStackTraceString(t));
         }
     }
