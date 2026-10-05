@@ -62,11 +62,8 @@ public final class MainHook implements IXposedHookLoadPackage {
                                     && !phrase.isEmpty()
                                     && b != null) {
                                 try {
-                                    // Use Gboard's own MutableDictionaryAccessorImpl instead
-                                    // of maintaining a separate local dictionary.
                                     saveToGboardDictionary(x.thisObject, hdl, b, c, phrase);
 
-                                    // Keep the old local record for diagnostics for now.
                                     ensureDb();
                                     if (db != null) {
                                         int count = db.record(pinyin, phrase);
@@ -87,8 +84,6 @@ public final class MainHook implements IXposedHookLoadPackage {
                 hooked++;
             }
 
-            // B() is the actual candidate-iterator entry point. It runs before Z(),
-            // so hook its returned hdb instead of waiting for candidate selection.
             try {
                 Method bMethod = null;
                 Class<?> c = pc;
@@ -163,35 +158,34 @@ public final class MainHook implements IXposedHookLoadPackage {
         installDictionaryAccessorDiagnostics(accessor);
 
         try {
-            Method add = null;
+            Method insert = null;
             Class<?> c = accessor.getClass();
-            while (c != null && add == null) {
+            while (c != null && insert == null) {
                 for (Method m : c.getDeclaredMethods()) {
-                    if (!"b".equals(m.getName())) continue;
+                    if (!"c".equals(m.getName())) continue;
                     Class<?>[] p = m.getParameterTypes();
-                    if (p.length == 4
+                    if (p.length == 3
                             && p[0] == String[].class
                             && p[1] == int[].class
-                            && p[2] == String.class
-                            && p[3] == boolean.class) {
-                        add = m;
+                            && p[2] == String.class) {
+                        insert = m;
                         break;
                     }
                 }
                 c = c.getSuperclass();
             }
 
-            if (add == null) {
-                XposedBridge.log(TAG + ": MutableDictionaryAccessorImpl.b() not found");
+            if (insert == null) {
+                XposedBridge.log(TAG + ": MutableDictionaryAccessorImpl.c() not found");
                 return;
             }
 
-            add.setAccessible(true);
-            add.invoke(accessor, tokens, types, phrase, true);
-            XposedBridge.log(TAG + ": GBOARD-SAVED phrase=" + phrase
+            insert.setAccessible(true);
+            insert.invoke(accessor, tokens, types, phrase);
+            XposedBridge.log(TAG + ": GBOARD-INSERTED phrase=" + phrase
                     + " pinyin=" + join(tokens));
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": native dictionary save failed: "
+            XposedBridge.log(TAG + ": native dictionary insert failed: "
                     + android.util.Log.getStackTraceString(t));
         }
     }
@@ -210,8 +204,6 @@ public final class MainHook implements IXposedHookLoadPackage {
 
                     XposedBridge.log(TAG + ": DICT-METHOD " + m.toGenericString());
 
-                    // Hook every instance method declared by the accessor so we can
-                    // observe which method Gboard itself uses for a newly learned word.
                     if (java.lang.reflect.Modifier.isStatic(m.getModifiers())) continue;
 
                     m.setAccessible(true);
