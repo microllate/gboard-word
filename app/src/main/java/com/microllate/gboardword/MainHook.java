@@ -192,13 +192,12 @@ public final class MainHook implements IXposedHookLoadPackage {
 
     private static synchronized void saveToGboardDictionary(
             Object processor, Object hdl, Object tokens, Object types, String phrase) {
-        // AbstractHmmChineseDecodeProcessor's field f is Gboard's own
-        // Chinese user-dictionary provider. Its a() method returns the
-        // MutableDictionaryAccessorImpl backed by user_dict_3_3.
+        // g -> u(context) -> user_dictionary_accessor_for_ime -> shortcuts_dict_3_3.
+        // f is the other dictionary; c() only decreases its count.
         try {
-            Object provider = findFieldInHierarchy(processor, "f");
+            Object provider = findFieldInHierarchy(processor, "g");
             if (provider == null) {
-                XposedBridge.log(TAG + ": USER-DICT provider f=null; save skipped");
+                XposedBridge.log(TAG + ": USER-DICT provider g=null; save skipped");
                 return;
             }
 
@@ -206,64 +205,117 @@ public final class MainHook implements IXposedHookLoadPackage {
             Class<?> c = provider.getClass();
             while (c != null && accessorMethod == null) {
                 for (Method m : c.getDeclaredMethods()) {
-                    if ("a".equals(m.getName())
-                            && m.getParameterTypes().length == 0) {
+                    if ("a".equals(m.getName()) && m.getParameterTypes().length == 0) {
                         accessorMethod = m;
                         break;
                     }
                 }
                 c = c.getSuperclass();
             }
-
             if (accessorMethod == null) {
-                XposedBridge.log(TAG + ": USER-DICT f.a() not found; save skipped");
+                XposedBridge.log(TAG + ": USER-DICT g.a() not found; save skipped");
                 return;
             }
 
             accessorMethod.setAccessible(true);
             Object accessor = accessorMethod.invoke(provider);
             if (accessor == null) {
-                XposedBridge.log(TAG + ": USER-DICT f.a() returned null; save skipped");
+                XposedBridge.log(TAG + ": USER-DICT g.a() returned null; save skipped");
                 return;
             }
 
-            Method insert = null;
+            installDictionaryAccessorDiagnostics(accessor);
+
+            Method nativeInsert = null;
+            Method nativePersist = null;
             c = accessor.getClass();
-            while (c != null && insert == null) {
+            while (c != null) {
                 for (Method m : c.getDeclaredMethods()) {
                     Class<?>[] ps = m.getParameterTypes();
-                    if ("c".equals(m.getName())
-                            && ps.length == 3
-                            && ps[0] == String[].class
-                            && ps[1] == int[].class
-                            && ps[2] == String.class) {
-                        insert = m;
-                        break;
+                    if ("nativeInsertOrUpdate".equals(m.getName()) && ps.length == 7
+                            && ps[0] == long.class && ps[1] == String[].class
+                            && ps[2] == int[].class && ps[3] == String.class
+                            && ps[4] == int.class && ps[5] == boolean.class
+                            && ps[6] == boolean.class) {
+                        nativeInsert = m;
+                    } else if ("nativePersist".equals(m.getName()) && ps.length == 2
+                            && ps[0] == long.class && ps[1] == String.class) {
+                        nativePersist = m;
                     }
                 }
                 c = c.getSuperclass();
             }
-
-            if (insert == null) {
-                XposedBridge.log(TAG + ": USER-DICT c(String[],int[],String) not found; save skipped");
+            if (nativeInsert == null) {
+                XposedBridge.log(TAG + ": USER-DICT nativeInsertOrUpdate not found");
                 return;
             }
 
-            insert.setAccessible(true);
+            long handle = findSingleLongField(accessor);
+            if (handle == Long.MIN_VALUE) {
+                XposedBridge.log(TAG + ": USER-DICT dictionary handle not found; save skipped");
+                return;
+            }
 
-            // Trace only after resolving Gboard's real user_dict_3_3 accessor.
-            // This lets us see what c() actually does and which native API
-            // persists the entry, instead of assuming c() is the editor API.
-            installDictionaryAccessorDiagnostics(accessor);
+            String[] source = tokens instanceof String[] ? (String[]) tokens : new String[0];
+            String[] chars = pinyinChars(source);
+            int[] charTypes = new int[chars.length];
+            java.util.Arrays.fill(charTypes, 26);
 
-            insert.invoke(accessor, tokens, types, phrase);
-            XposedBridge.log(TAG + ": GBOARD-USER-DICT-SAVED phrase=" + phrase
-                    + " pinyin=" + join(tokens)
-                    + " accessor=" + accessor.getClass().getName());
+            nativeInsert.setAccessible(true);
+            Object result = nativeInsert.invoke(null, handle, chars, charTypes, phrase, 255, false, true);
+            XposedBridge.log(TAG + ": GBOARD-USER-DICT-INSERT phrase=" + phrase
+                    + " handle=" + handle + " result=" + result
+                    + " pinyin=" + join(tokens));
+
+            if (Boolean.TRUE.equals(result) && nativePersist != null) {
+                nativePersist.setAccessible(true);
+                Object persisted = nativePersist.invoke(null, handle,
+                        "/data/user/0/com.google.android.inputmethod.latin/files/shortcuts_dict_3_3_tmp");
+                XposedBridge.log(TAG + ": GBOARD-USER-DICT-PERSIST result=" + persisted);
+            }
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": USER-DICT save failed: "
                     + android.util.Log.getStackTraceString(t));
         }
+    }
+
+    private static long findSingleLongField(Object accessor) {
+        long found = Long.MIN_VALUE;
+        try {
+            Class<?> c = accessor.getClass();
+            while (c != null) {
+                for (Field f : c.getDeclaredFields()) {
+                    if (f.getType() != long.class
+                            || java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+                    f.setAccessible(true);
+                    long value = f.getLong(accessor);
+                    if (value == 0) continue;
+                    if (found != Long.MIN_VALUE && found != value) {
+                        XposedBridge.log(TAG + ": USER-DICT multiple long handles found; refusing ambiguous write");
+                        return Long.MIN_VALUE;
+                    }
+                    found = value;
+                }
+                c = c.getSuperclass();
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": USER-DICT handle lookup failed: "
+                    + t.getClass().getSimpleName());
+            return Long.MIN_VALUE;
+        }
+        return found;
+    }
+
+    private static String[] pinyinChars(String[] syllables) {
+        if (syllables == null) return new String[0];
+        java.util.ArrayList<String> out = new java.util.ArrayList<String>();
+        for (String syllable : syllables) {
+            if (syllable == null) continue;
+            for (int i = 0; i < syllable.length(); i++) {
+                out.add(String.valueOf(syllable.charAt(i)));
+            }
+        }
+        return out.toArray(new String[0]);
     }
 
     private static synchronized void installDictionaryAccessorDiagnostics(Object accessor) {
