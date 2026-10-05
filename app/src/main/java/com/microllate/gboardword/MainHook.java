@@ -58,7 +58,7 @@ public final class MainHook implements IXposedHookLoadPackage {
                             String pinyin = shortcutFromTokens(tokens);
 
                             if (!Boolean.TRUE.equals(fullMatch)
-                                    || phrase == null || phrase.isEmpty()
+                                    || phrase == null || phrase.length() <= 1
                                     || tokens == null || pinyin.isEmpty()) {
                                 return;
                             }
