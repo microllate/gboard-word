@@ -128,8 +128,8 @@ public final class MainHook implements IXposedHookLoadPackage {
 
             String dictionaryText =
                     "# Gboard Dictionary version:2\n"
-                    + "# Gboard Dictionary format:shortcut\\tword\\tlanguage_tag\\tpos_tag\n"
-                    + pinyin + "\\t" + phrase + "\\tzh-CN\\t\n";
+                    + "# Gboard Dictionary format:shortcut\tword\tlanguage_tag\tpos_tag\n"
+                    + pinyin + "\t" + phrase + "\tzh-CN\t\n";
 
             InputStream input = new ByteArrayInputStream(
                     dictionaryText.getBytes(StandardCharsets.UTF_8));
