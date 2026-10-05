@@ -79,7 +79,7 @@ public final class MainHook implements IXposedHookLoadPackage {
                                     && !phrase.isEmpty()
                                     && b != null) {
                                 try {
-                                    saveToGboardDictionary(x.thisObject, b, c, phrase);
+                                    importToGboardPersonalDictionary(p.thisClass.getClassLoader(), b, phrase);
 
                                     ensureDb();
                                     if (db != null) {
@@ -212,32 +212,96 @@ public final class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    private static synchronized void saveToGboardDictionary(
-            Object processor, Object tokens, Object types, String phrase) {
-        // This is the exact API used by Gboard's Personal Dictionary UI.
-        // Gboard writes the entry to Android UserDictionary first:
-        // UserDictionary.Words.addWord(context, word, 250, shortcut, locale)
-        // and its ShortcutsDataManager then imports it into shortcuts_dict_3_3.
+    private static synchronized void importToGboardPersonalDictionary(
+            ClassLoader loader, Object tokens, String phrase) {
         try {
-            Application app = (Application) XposedHelpers.callStaticMethod(
-                    Class.forName("android.app.ActivityThread"),
-                    "currentApplication");
-            if (app == null) {
-                XposedBridge.log(TAG + ": SHORT-DICT application=null; save skipped");
+            Object fragment = personalDictionaryFragment;
+            if (fragment == null) {
+                XposedBridge.log(TAG + ": PERSONAL-DICT importer skipped: fragment=null");
                 return;
             }
 
-            android.provider.UserDictionary.Words.addWord(
-                    app,
-                    phrase,
-                    250,
-                    "",
-                    java.util.Locale.SIMPLIFIED_CHINESE);
+            Object qhc = findFieldInHierarchy(fragment, "d");
+            Object car = findFieldInHierarchy(fragment, "a");
+            if (qhc == null || car == null) {
+                XposedBridge.log(TAG + ": PERSONAL-DICT importer skipped: qhc/car=null");
+                return;
+            }
 
-            XposedBridge.log(TAG + ": SHORT-DICT-ADD phrase=" + phrase
-                    + " via=UserDictionary.Words.addWord frequency=250 locale=zh_CN");
+            String pinyin = join(tokens);
+            if (pinyin == null || pinyin.isEmpty()
+                    || phrase == null || phrase.isEmpty()) {
+                return;
+            }
+
+            // Feed the exact Gboard Personal Dictionary text format into
+            // PersonalDictionaryImporter (qhm), then hand the parsed qhl
+            // to the same car.k(...) import pipeline used by the UI.
+            String dictionaryText =
+                    "# Gboard Dictionary version:2\\n"
+                    + "# Gboard Dictionary format:shortcut\\tword\\tlanguage_tag\\tpos_tag\\n"
+                    + pinyin + "\\t" + phrase + "\\tzh-CN\\t\\n";
+
+            Class<?> qhmClass = Class.forName("qhm", false, loader);
+            java.lang.reflect.Constructor<?> ctor =
+                    qhmClass.getDeclaredConstructor(qhc.getClass());
+            ctor.setAccessible(true);
+            Object importer = ctor.newInstance(qhc);
+
+            java.io.InputStream input =
+                    new java.io.ByteArrayInputStream(
+                            dictionaryText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+            Method parse = null;
+            Class<?> c = qhmClass;
+            while (c != null && parse == null) {
+                for (Method m : c.getDeclaredMethods()) {
+                    if ("a".equals(m.getName())
+                            && m.getParameterTypes().length == 2
+                            && java.io.InputStream.class.isAssignableFrom(m.getParameterTypes()[0])
+                            && m.getParameterTypes()[1] == String.class) {
+                        parse = m;
+                        break;
+                    }
+                }
+                c = c.getSuperclass();
+            }
+            if (parse == null) {
+                XposedBridge.log(TAG + ": PERSONAL-DICT parser qhm.a() not found");
+                return;
+            }
+
+            parse.setAccessible(true);
+            Object parsed = parse.invoke(importer, input, "dictionary.txt");
+            if (parsed == null) {
+                XposedBridge.log(TAG + ": PERSONAL-DICT parse returned null phrase=" + phrase);
+                return;
+            }
+
+            Method importMethod = null;
+            c = car.getClass();
+            while (c != null && importMethod == null) {
+                for (Method m : c.getDeclaredMethods()) {
+                    if ("k".equals(m.getName())
+                            && m.getParameterTypes().length == 1
+                            && m.getParameterTypes()[0].isAssignableFrom(parsed.getClass())) {
+                        importMethod = m;
+                        break;
+                    }
+                }
+                c = c.getSuperclass();
+            }
+            if (importMethod == null) {
+                XposedBridge.log(TAG + ": PERSONAL-DICT car.k(qhl) not found");
+                return;
+            }
+
+            importMethod.setAccessible(true);
+            importMethod.invoke(car, parsed);
+            XposedBridge.log(TAG + ": PERSONAL-DICT imported phrase="
+                    + phrase + " shortcut=" + pinyin + " format=dictionary.txt");
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": SHORT-DICT save failed: "
+            XposedBridge.log(TAG + ": PERSONAL-DICT import failed: "
                     + android.util.Log.getStackTraceString(t));
         }
     }
