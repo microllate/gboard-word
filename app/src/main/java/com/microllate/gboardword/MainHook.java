@@ -15,6 +15,7 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static final String PROCESSOR =
             "com.google.android.apps.inputmethod.libs.chinese.ime.hmm.AbstractHmmChineseDecodeProcessor";
     private static boolean candidateHookInstalled;
+    private static boolean nativeTraceInstalled;
     private static PersonalDb db;
     private static Object candidateEngine;
     @Override
@@ -177,6 +178,8 @@ public final class MainHook implements IXposedHookLoadPackage {
             Object accessor = accessorMethod.invoke(provider);
             if (accessor == null) return;
 
+            installNativeDictionaryTrace(accessor.getClass());
+
             Method nativeInsert = null;
             Method nativePersist = null;
             c = accessor.getClass();
@@ -242,6 +245,51 @@ public final class MainHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": GBOARD-DICT save failed: "
                     + android.util.Log.getStackTraceString(t));
+        }
+    }
+
+
+    private static synchronized void installNativeDictionaryTrace(Class<?> runtimeClass) {
+        if (nativeTraceInstalled || runtimeClass == null) return;
+        try {
+            Class<?> c = runtimeClass;
+            Method target = null;
+            while (c != null && target == null) {
+                for (Method m : c.getDeclaredMethods()) {
+                    Class<?>[] ps = m.getParameterTypes();
+                    if ("nativeInsertOrUpdate".equals(m.getName()) && ps.length == 7
+                            && ps[0] == long.class && ps[1] == String[].class
+                            && ps[2] == int[].class && ps[3] == String.class
+                            && ps[4] == int.class && ps[5] == boolean.class
+                            && ps[6] == boolean.class) {
+                        target = m;
+                        break;
+                    }
+                }
+                c = c.getSuperclass();
+            }
+            if (target == null) return;
+
+            target.setAccessible(true);
+            XposedBridge.hookMethod(target, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam x) {
+                    try {
+                        String phrase = String.valueOf(x.args[3]);
+                        String[] chars = (String[]) x.args[1];
+                        int[] types = (int[]) x.args[2];
+                        XposedBridge.log(TAG + ": NATIVE-INSERT phrase=" + phrase
+                                + " handle=" + x.args[0]
+                                + " chars=" + java.util.Arrays.toString(chars)
+                                + " types=" + java.util.Arrays.toString(types)
+                                + " count=" + x.args[4]
+                                + " flags=" + x.args[5] + "," + x.args[6]);
+                    } catch (Throwable ignored) {
+                    }
+                }
+            });
+            nativeTraceInstalled = true;
+        } catch (Throwable ignored) {
         }
     }
 
