@@ -187,7 +187,18 @@ public final class MainHook implements IXposedHookLoadPackage {
             Method getManager = managerClass.getDeclaredMethod("B", Context.class);
             getManager.setAccessible(true);
             Object manager = getManager.invoke(null, app);
-            Method refresh = managerClass.getDeclaredMethod("z");
+            Method refresh = null;
+            Class<?> mc = managerClass;
+            while (mc != null && refresh == null) {
+                try {
+                    refresh = mc.getDeclaredMethod("z");
+                } catch (NoSuchMethodException ignored) {
+                    mc = mc.getSuperclass();
+                }
+            }
+            if (refresh == null) {
+                throw new NoSuchMethodException("qhe.z()");
+            }
             refresh.setAccessible(true);
             refresh.invoke(manager);
 
