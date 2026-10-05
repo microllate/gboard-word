@@ -17,6 +17,8 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static boolean candidateHookInstalled;
     private static PersonalDb db;
     private static Object candidateEngine;
+    private static final java.util.Set<String> dictionaryDiagnosticHooks =
+            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<String, Boolean>());
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
@@ -158,6 +160,8 @@ public final class MainHook implements IXposedHookLoadPackage {
             return;
         }
 
+        installDictionaryAccessorDiagnostics(accessor);
+
         try {
             Method add = null;
             Class<?> c = accessor.getClass();
@@ -190,6 +194,74 @@ public final class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + ": native dictionary save failed: "
                     + android.util.Log.getStackTraceString(t));
         }
+    }
+
+    private static synchronized void installDictionaryAccessorDiagnostics(Object accessor) {
+        if (accessor == null) return;
+
+        try {
+            Class<?> c = accessor.getClass();
+            XposedBridge.log(TAG + ": DICT-CLASS=" + c.getName());
+
+            while (c != null && c != Object.class) {
+                for (Method m : c.getDeclaredMethods()) {
+                    String key = c.getName() + "#" + m.toGenericString();
+                    if (!dictionaryDiagnosticHooks.add(key)) continue;
+
+                    XposedBridge.log(TAG + ": DICT-METHOD " + m.toGenericString());
+
+                    // Hook every instance method declared by the accessor so we can
+                    // observe which method Gboard itself uses for a newly learned word.
+                    if (java.lang.reflect.Modifier.isStatic(m.getModifiers())) continue;
+
+                    m.setAccessible(true);
+                    XposedBridge.hookMethod(m, new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam x) {
+                            try {
+                                StringBuilder s = new StringBuilder(TAG + ": DICT-CALL ")
+                                        .append(m.getName()).append("(");
+                                for (int i = 0; i < x.args.length; i++) {
+                                    if (i > 0) s.append(", ");
+                                    s.append(formatDiagnosticArg(x.args[i]));
+                                }
+                                s.append(")");
+                                XposedBridge.log(s.toString());
+                            } catch (Throwable t) {
+                                XposedBridge.log(TAG + ": DICT-CALL log failed: "
+                                        + t.getClass().getSimpleName());
+                            }
+                        }
+
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam x) {
+                            try {
+                                XposedBridge.log(TAG + ": DICT-RET "
+                                        + m.getName() + "=" + formatDiagnosticArg(x.getResult()));
+                            } catch (Throwable t) {
+                                XposedBridge.log(TAG + ": DICT-RET log failed: "
+                                        + t.getClass().getSimpleName());
+                            }
+                        }
+                    });
+                }
+                c = c.getSuperclass();
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": DICT diagnostics failed: "
+                    + android.util.Log.getStackTraceString(t));
+        }
+    }
+
+    private static String formatDiagnosticArg(Object value) {
+        if (value == null) return "null";
+        if (value instanceof String[]) return "String[]=" + java.util.Arrays.toString((String[]) value);
+        if (value instanceof int[]) return "int[]=" + java.util.Arrays.toString((int[]) value);
+        if (value instanceof Object[]) return value.getClass().getComponentType().getSimpleName()
+                + "[]=" + java.util.Arrays.toString((Object[]) value);
+        if (value.getClass().isArray()) return value.getClass().getComponentType().getSimpleName() + "[]";
+        String s = String.valueOf(value);
+        return s.length() > 160 ? s.substring(0, 160) + "..." : s;
     }
 
     private static String typeName(Object o) {
