@@ -151,11 +151,14 @@ public final class MainHook implements IXposedHookLoadPackage {
 
     private static synchronized void saveToGboardDictionary(
             Object processor, Object tokens, Object types, String phrase) {
-        // Current test target: Gboard shortcuts_dict_3_3.
+        // Reuse Gboard's own MutableDictionaryAccessorImpl.b() learning path.
         try {
-            Object provider = findFieldInHierarchy(processor, "g");
+            Object provider = findFieldInHierarchy(processor, "f");
             if (provider == null) {
-                XposedBridge.log(TAG + ": USER-DICT provider g=null; save skipped");
+                provider = findFieldInHierarchy(processor, "g");
+            }
+            if (provider == null) {
+                XposedBridge.log(TAG + ": GBOARD-DICT provider not found; save skipped");
                 return;
             }
 
@@ -171,108 +174,51 @@ public final class MainHook implements IXposedHookLoadPackage {
                 c = c.getSuperclass();
             }
             if (accessorMethod == null) {
-                XposedBridge.log(TAG + ": USER-DICT g.a() not found; save skipped");
+                XposedBridge.log(TAG + ": GBOARD-DICT provider.a() not found; save skipped");
                 return;
             }
 
             accessorMethod.setAccessible(true);
             Object accessor = accessorMethod.invoke(provider);
             if (accessor == null) {
-                XposedBridge.log(TAG + ": USER-DICT g.a() returned null; save skipped");
+                XposedBridge.log(TAG + ": GBOARD-DICT provider.a() returned null; save skipped");
                 return;
             }
 
-            Method nativeInsert = null;
-            Method nativePersist = null;
+            Method addCount = null;
             c = accessor.getClass();
-            while (c != null) {
+            while (c != null && addCount == null) {
                 for (Method m : c.getDeclaredMethods()) {
                     Class<?>[] ps = m.getParameterTypes();
-                    if ("nativeInsertOrUpdate".equals(m.getName()) && ps.length == 7
-                            && ps[0] == long.class && ps[1] == String[].class
-                            && ps[2] == int[].class && ps[3] == String.class
-                            && ps[4] == int.class && ps[5] == boolean.class
-                            && ps[6] == boolean.class) {
-                        nativeInsert = m;
-                    } else if ("nativePersist".equals(m.getName()) && ps.length == 2
-                            && ps[0] == long.class && ps[1] == String.class) {
-                        nativePersist = m;
+                    if ("b".equals(m.getName()) && ps.length == 4
+                            && ps[0] == String[].class
+                            && ps[1] == int[].class
+                            && ps[2] == String.class
+                            && ps[3] == boolean.class) {
+                        addCount = m;
+                        break;
                     }
                 }
                 c = c.getSuperclass();
             }
-            if (nativeInsert == null) {
-                XposedBridge.log(TAG + ": USER-DICT nativeInsertOrUpdate not found");
-                return;
-            }
-
-            long handle = findSingleLongField(accessor);
-            if (handle == Long.MIN_VALUE) {
-                XposedBridge.log(TAG + ": USER-DICT dictionary handle not found; save skipped");
+            if (addCount == null) {
+                XposedBridge.log(TAG + ": GBOARD-DICT accessor.b() not found; save skipped");
                 return;
             }
 
             String[] source = tokens instanceof String[] ? (String[]) tokens : new String[0];
-            String[] chars = pinyinChars(source);
-            int[] charTypes = new int[chars.length];
-            java.util.Arrays.fill(charTypes, 26);
+            int[] sourceTypes = types instanceof int[] ? (int[]) types : new int[0];
 
-            nativeInsert.setAccessible(true);
-            Object result = nativeInsert.invoke(null, handle, chars, charTypes, phrase, 255, false, true);
-            XposedBridge.log(TAG + ": GBOARD-USER-DICT-INSERT phrase=" + phrase
-                    + " handle=" + handle + " result=" + result
-                    + " pinyin=" + join(tokens));
-
-            if (Boolean.TRUE.equals(result) && nativePersist != null) {
-                nativePersist.setAccessible(true);
-                Object persisted = nativePersist.invoke(null, handle,
-                        "/data/user/0/com.google.android.inputmethod.latin/files/shortcuts_dict_3_3_tmp");
-                XposedBridge.log(TAG + ": GBOARD-USER-DICT-PERSIST result=" + persisted);
-            }
+            addCount.setAccessible(true);
+            Object result = addCount.invoke(accessor, source, sourceTypes, phrase, true);
+            XposedBridge.log(TAG + ": GBOARD-DICT-ADD phrase=" + phrase
+                    + " result=" + result + " pinyin=" + join(tokens));
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": USER-DICT save failed: "
+            XposedBridge.log(TAG + ": GBOARD-DICT add failed: "
                     + android.util.Log.getStackTraceString(t));
         }
     }
 
-    private static long findSingleLongField(Object accessor) {
-        long found = Long.MIN_VALUE;
-        try {
-            Class<?> c = accessor.getClass();
-            while (c != null) {
-                for (Field f : c.getDeclaredFields()) {
-                    if (f.getType() != long.class
-                            || java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
-                    f.setAccessible(true);
-                    long value = f.getLong(accessor);
-                    if (value == 0) continue;
-                    if (found != Long.MIN_VALUE && found != value) {
-                        XposedBridge.log(TAG + ": USER-DICT multiple long handles found; refusing ambiguous write");
-                        return Long.MIN_VALUE;
-                    }
-                    found = value;
-                }
-                c = c.getSuperclass();
-            }
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": USER-DICT handle lookup failed: "
-                    + t.getClass().getSimpleName());
-            return Long.MIN_VALUE;
-        }
-        return found;
-    }
-
-    private static String[] pinyinChars(String[] syllables) {
-        if (syllables == null) return new String[0];
-        java.util.ArrayList<String> out = new java.util.ArrayList<String>();
-        for (String syllable : syllables) {
-            if (syllable == null) continue;
-            for (int i = 0; i < syllable.length(); i++) {
-                out.add(String.valueOf(syllable.charAt(i)));
-            }
-        }
-        return out.toArray(new String[0]);
-    }
 
     private static String formatDiagnosticArg(Object value) {
         if (value == null) return "null";
