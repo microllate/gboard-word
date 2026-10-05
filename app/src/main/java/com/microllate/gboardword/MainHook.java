@@ -151,8 +151,9 @@ public final class MainHook implements IXposedHookLoadPackage {
 
     private static synchronized void saveToGboardDictionary(
             Object processor, Object tokens, Object types, String phrase) {
-        // Reuse the accessor behind g -> u(context), which on this Gboard build
-        // is the dictionary used by the Personal Dictionary UI.
+        // This is the same MutableDictionaryAccessorImpl.b() path used by
+        // Gboard's Chinese Personal Dictionary code (nativeAddCount underneath).
+        // Do not guess the native handle or write the dictionary file ourselves.
         try {
             Object provider = findFieldInHierarchy(processor, "g");
             if (provider == null) {
@@ -171,85 +172,52 @@ public final class MainHook implements IXposedHookLoadPackage {
                 }
                 c = c.getSuperclass();
             }
-            if (accessorMethod == null) return;
+            if (accessorMethod == null) {
+                XposedBridge.log(TAG + ": GBOARD-DICT accessor method not found");
+                return;
+            }
 
             accessorMethod.setAccessible(true);
             Object accessor = accessorMethod.invoke(provider);
-            if (accessor == null) return;
+            if (accessor == null) {
+                XposedBridge.log(TAG + ": GBOARD-DICT accessor=null; save skipped");
+                return;
+            }
 
-            // Install on the concrete runtime accessor class. The Personal Dictionary UI
-            // uses this same native class, while the processor's g field only exposes a provider type.
-            installNativeDictionaryTrace(accessor.getClass());
-
-
-            Method nativeInsert = null;
-            Method nativePersist = null;
+            Method addCount = null;
             c = accessor.getClass();
-            while (c != null) {
+            while (c != null && addCount == null) {
                 for (Method m : c.getDeclaredMethods()) {
                     Class<?>[] ps = m.getParameterTypes();
-                    if ("nativeInsertOrUpdate".equals(m.getName()) && ps.length == 7
-                            && ps[0] == long.class && ps[1] == String[].class
-                            && ps[2] == int[].class && ps[3] == String.class
-                            && ps[4] == int.class && ps[5] == boolean.class
-                            && ps[6] == boolean.class) {
-                        nativeInsert = m;
-                    } else if ("nativePersist".equals(m.getName()) && ps.length == 2
-                            && ps[0] == long.class && ps[1] == String.class) {
-                        nativePersist = m;
+                    if ("b".equals(m.getName()) && ps.length == 4
+                            && ps[0] == String[].class
+                            && ps[1] == int[].class
+                            && ps[2] == String.class
+                            && ps[3] == boolean.class) {
+                        addCount = m;
+                        break;
                     }
                 }
                 c = c.getSuperclass();
             }
 
-            if (nativeInsert == null || nativePersist == null) {
-                XposedBridge.log(TAG + ": GBOARD-DICT native API not found");
+            if (addCount == null) {
+                XposedBridge.log(TAG + ": GBOARD-DICT b(String[],int[],String,boolean) not found"
+                        + " class=" + accessor.getClass().getName());
                 return;
             }
 
-            long handle = findSingleLongField(accessor);
-            if (handle == Long.MIN_VALUE) {
-                XposedBridge.log(TAG + ": GBOARD-DICT handle not found");
-                return;
-            }
-
-            String[] source = tokens instanceof String[] ? (String[]) tokens : new String[0];
-            String[] chars = pinyinChars(source);
-            int[] charTypes = new int[chars.length];
-            java.util.Arrays.fill(charTypes, 26);
-
-            nativeInsert.setAccessible(true);
-            Object result = nativeInsert.invoke(null, handle, chars, charTypes,
-                    phrase, 255, false, true);
-            XposedBridge.log(TAG + ": GBOARD-DICT-INSERT phrase=" + phrase
-                    + " result=" + result);
-
-            if (Boolean.TRUE.equals(result)) {
-                String dir = "/data/user/0/com.google.android.inputmethod.latin/files/";
-                String tmp = dir + "shortcuts_dict_3_3_tmp";
-                String dst = dir + "shortcuts_dict_3_3";
-
-                nativePersist.setAccessible(true);
-                Object persisted = nativePersist.invoke(null, handle, tmp);
-                if (Boolean.TRUE.equals(persisted)) {
-                    java.io.File tmpFile = new java.io.File(tmp);
-                    java.io.File dstFile = new java.io.File(dst);
-                    java.io.File backup = new java.io.File(dst + ".bak");
-                    if (dstFile.exists()) dstFile.delete();
-                    boolean renamed = tmpFile.renameTo(dstFile);
-                    if (!renamed && backup.exists() && !dstFile.exists()) {
-                        backup.renameTo(dstFile);
-                    }
-                    XposedBridge.log(TAG + ": GBOARD-DICT-PERSIST result="
-                            + persisted + " rename=" + renamed);
-                }
-            }
+            String[] pinyin = tokens instanceof String[] ? (String[]) tokens : new String[0];
+            int[] tokenTypes = types instanceof int[] ? (int[]) types : new int[0];
+            addCount.setAccessible(true);
+            Object result = addCount.invoke(accessor, pinyin, tokenTypes, phrase, true);
+            XposedBridge.log(TAG + ": GBOARD-DICT-ADD phrase=" + phrase
+                    + " pinyin=" + join(pinyin) + " result=" + result);
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": GBOARD-DICT save failed: "
                     + android.util.Log.getStackTraceString(t));
         }
     }
-
 
     private static synchronized void installNativeDictionaryTrace(Class<?> runtimeClass) {
         if (nativeTraceInstalled || runtimeClass == null) return;
