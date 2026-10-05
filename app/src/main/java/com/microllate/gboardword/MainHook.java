@@ -154,54 +154,12 @@ public final class MainHook implements IXposedHookLoadPackage {
 
     private static synchronized void saveToGboardDictionary(
             Object processor, Object hdl, Object tokens, Object types, String phrase) {
-        if (!(tokens instanceof String[]) || !(types instanceof int[])) {
-            XposedBridge.log(TAG + ": dictionary args unexpected tokens="
-                    + typeName(tokens) + " types=" + typeName(types));
-            return;
-        }
-
-        Object accessor = findObjectByTypeName(processor, "MutableDictionaryAccessorImpl", 6);
-        if (accessor == null) {
-            accessor = findObjectByTypeName(hdl, "MutableDictionaryAccessorImpl", 6);
-        }
-        if (accessor == null) {
-            XposedBridge.log(TAG + ": MutableDictionaryAccessorImpl not found");
-            return;
-        }
-
-        installDictionaryAccessorDiagnostics(accessor);
-
-        try {
-            Method insert = null;
-            Class<?> c = accessor.getClass();
-            while (c != null && insert == null) {
-                for (Method m : c.getDeclaredMethods()) {
-                    if (!"c".equals(m.getName())) continue;
-                    Class<?>[] p = m.getParameterTypes();
-                    if (p.length == 3
-                            && p[0] == String[].class
-                            && p[1] == int[].class
-                            && p[2] == String.class) {
-                        insert = m;
-                        break;
-                    }
-                }
-                c = c.getSuperclass();
-            }
-
-            if (insert == null) {
-                XposedBridge.log(TAG + ": MutableDictionaryAccessorImpl.c() not found");
-                return;
-            }
-
-            insert.setAccessible(true);
-            insert.invoke(accessor, tokens, types, phrase);
-            XposedBridge.log(TAG + ": GBOARD-INSERTED phrase=" + phrase
-                    + " pinyin=" + join(tokens));
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": native dictionary insert failed: "
-                    + android.util.Log.getStackTraceString(t));
-        }
+        // Safety stop: the first MutableDictionaryAccessorImpl we found was
+        // Gboard's contacts dictionary (contacts_dict_3_3), not user_dict_3_3.
+        // Do not mutate any dictionary until the correct personal-dictionary
+        // accessor has been identified.
+        XposedBridge.log(TAG + ": DICT-SAVE DISABLED phrase=" + phrase
+                + " pinyin=" + join(tokens));
     }
 
     private static synchronized void installDictionaryAccessorDiagnostics(Object accessor) {
