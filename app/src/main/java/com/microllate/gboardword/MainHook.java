@@ -154,9 +154,7 @@ public final class MainHook implements IXposedHookLoadPackage {
                 Method importMethod = importerClass.getDeclaredMethod(
                         "a", java.io.InputStream.class, String.class);
                 importMethod.setAccessible(true);
-                Object result = importMethod.invoke(importer, in, "text/plain");
-                XposedBridge.log(TAG + ": IMPORT phrase=" + phrase
-                        + " shortcut=" + pinyin + " result=" + String.valueOf(result));
+                importMethod.invoke(importer, in, "text/plain");
             }
         } catch (Throwable t) {
             Throwable cause = t instanceof java.lang.reflect.InvocationTargetException
