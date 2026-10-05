@@ -180,6 +180,17 @@ public final class MainHook implements IXposedHookLoadPackage {
             importMethod.setAccessible(true);
             importMethod.invoke(car, parsed);
 
+            // qhm writes the entry into PersonalDictionary.db. The real Gboard
+            // settings flow then wakes PersonalDictionaryDatabaseManager so the
+            // new entry is propagated to the content-data/shortcut dictionaries.
+            Class<?> managerClass = Class.forName("qhe", false, loader);
+            Method getManager = managerClass.getDeclaredMethod("B", Context.class);
+            getManager.setAccessible(true);
+            Object manager = getManager.invoke(null, app);
+            Method refresh = managerClass.getDeclaredMethod("z");
+            refresh.setAccessible(true);
+            refresh.invoke(manager);
+
             XposedBridge.log(TAG + ": IMPORTED phrase=" + phrase
                     + " shortcut=" + pinyin);
         } catch (Throwable t) {
