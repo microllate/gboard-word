@@ -3,10 +3,7 @@ package com.microllate.gboardword;
 import android.app.Application;
 import android.content.ContentResolver;
 import android.content.ContentValues;
-import android.content.Intent;
 import android.net.Uri;
-import android.provider.MediaStore;
-import java.io.OutputStream;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -66,10 +63,8 @@ public final class MainHook implements IXposedHookLoadPackage {
                             XposedBridge.log(TAG + ": SELECT phrase=" + phrase
                                     + " pinyin=" + pinyin);
 
-                            Uri uri = generateDictionaryTxt(phrase, pinyin);
-                            if (uri != null) {
-                                importDictionaryThroughGboard(uri);
-                            }
+                            String dictionaryText = buildDictionaryText(phrase, pinyin);
+                            importDictionaryThroughGboard(dictionaryText);
                         } catch (Throwable t) {
                             XposedBridge.log(TAG + ": SELECT failed: "
                                     + t.getClass().getSimpleName() + ": "
@@ -92,53 +87,14 @@ public final class MainHook implements IXposedHookLoadPackage {
      * importer and return the same content Uri that a file picker would give
      * to Gboard.
      */
-    private static synchronized Uri generateDictionaryTxt(
-            String phrase, String pinyin) {
-        try {
-            Application app = (Application) XposedHelpers.callStaticMethod(
-                    Class.forName("android.app.ActivityThread"),
-                    "currentApplication");
-            if (app == null) {
-                XposedBridge.log(TAG + ": TXT failed: application=null");
-                return null;
-            }
-
-            String dictionaryText =
-                    "# Gboard Dictionary version:2\n"
-                    + "# Gboard Dictionary format:shortcut\tword\tlanguage_tag\tpos_tag\n"
-                    + pinyin + "\t" + phrase + "\tzh-CN\t\n";
-
-            ContentResolver resolver = app.getContentResolver();
-            ContentValues values = new ContentValues();
-            values.put(MediaStore.MediaColumns.DISPLAY_NAME, "gboard_word_dictionary.txt");
-            values.put(MediaStore.MediaColumns.MIME_TYPE, "text/plain");
-            values.put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/GboardWord");
-
-            Uri uri = resolver.insert(
-                    MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
-            if (uri == null) {
-                throw new IllegalStateException("MediaStore insert returned null");
-            }
-
-            try (OutputStream out = resolver.openOutputStream(uri, "w")) {
-                if (out == null) {
-                    throw new IllegalStateException("openOutputStream returned null");
-                }
-                out.write(dictionaryText.getBytes(StandardCharsets.UTF_8));
-                out.flush();
-            }
-
-            XposedBridge.log(TAG + ": TXT generated: "
-                    + "Download/GboardWord/gboard_word_dictionary.txt"
-                    + " phrase=" + phrase
-                    + " shortcut=" + pinyin);
-            return uri;
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": TXT FAILED "
-                    + t.getClass().getSimpleName() + ": "
-                    + String.valueOf(t.getMessage()));
-            return null;
-        }
+    /**
+     * Build the exact TXT content accepted by Gboard's Personal Dictionary
+     * importer, but keep it entirely in memory instead of creating a file.
+     */
+    private static String buildDictionaryText(String phrase, String pinyin) {
+        return "# Gboard Dictionary version:2\\n"
+                + "# Gboard Dictionary format:shortcut\\tword\\tlanguage_tag\\tpos_tag\\n"
+                + pinyin + "\\t" + phrase + "\\tzh-CN\\t\\n";
     }
 
     /**
@@ -146,7 +102,7 @@ public final class MainHook implements IXposedHookLoadPackage {
      * fragment is only the front-end; qhm parses the TXT and qhf persists
      * the resulting qgw entry into PersonalDictionary.db.
      */
-    private static void importDictionaryThroughGboard(Uri uri) {
+    private static void importDictionaryThroughGboard(String dictionaryText) {
         try {
             Application app = (Application) XposedHelpers.callStaticMethod(
                     Class.forName("android.app.ActivityThread"),
@@ -163,11 +119,8 @@ public final class MainHook implements IXposedHookLoadPackage {
             Object importer = importerClass.getConstructor(
                     XposedHelpers.findClass("qhc", loader)).newInstance(db);
 
-            try (java.io.InputStream in = app.getContentResolver().openInputStream(uri)) {
-                if (in == null) {
-                    throw new IllegalStateException("openInputStream returned null");
-                }
-
+            try (java.io.InputStream in = new java.io.ByteArrayInputStream(
+                        dictionaryText.getBytes(StandardCharsets.UTF_8))) {
                 Method importMethod = importerClass.getDeclaredMethod(
                         "a", java.io.InputStream.class, String.class);
                 importMethod.setAccessible(true);
