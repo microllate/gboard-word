@@ -3,6 +3,8 @@ package com.microllate.gboardword;
 import android.app.Application;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
+import java.util.Set;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -16,6 +18,12 @@ public final class MainHook implements IXposedHookLoadPackage {
             "com.google.android.apps.inputmethod.libs.chinese.ime.hmm.AbstractHmmChineseDecodeProcessor";
     private static final String PERSONAL_DICTIONARY_IMPORTER = "qhm";
     private static final String PERSONAL_DICTIONARY_DB = "qhf";
+
+    private static final Object DICTIONARY_LOCK = new Object();
+    private static final Set<String> IMPORTED_WORDS = new HashSet<>();
+    private static Object cachedDb;
+    private static Object cachedImporter;
+    private static boolean dictionaryCacheInitialized;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
@@ -87,82 +95,84 @@ public final class MainHook implements IXposedHookLoadPackage {
     }
 
     /**
-     * Check whether the Chinese word is already in Gboard's PersonalDictionary.db.
-     * The shortcut/pinyin is intentionally ignored for duplicate detection.
+     * Load the existing personal dictionary once and keep the words in memory.
      */
     private static boolean alreadyImported(String phrase, ClassLoader loader,
-            Application app) {
-        try {
-            Class<?> dbClass = XposedHelpers.findClass(PERSONAL_DICTIONARY_DB, loader);
-            Object db = dbClass.getConstructor(android.content.Context.class).newInstance(app);
-            Method query = dbClass.getMethod("c");
-            Object cursorObject = query.invoke(db);
-            if (!(cursorObject instanceof android.database.Cursor)) return false;
-
-            android.database.Cursor cursor = (android.database.Cursor) cursorObject;
-            try {
-                int wordIndex = cursor.getColumnIndex("word");
-                while (cursor.moveToNext()) {
-                    String word = wordIndex >= 0 ? cursor.getString(wordIndex) : null;
-                    if (phrase.equals(word)) return true;
+            Application app) throws Exception {
+        synchronized (DICTIONARY_LOCK) {
+            if (!dictionaryCacheInitialized) {
+                Class<?> dbClass = XposedHelpers.findClass(PERSONAL_DICTIONARY_DB, loader);
+                cachedDb = dbClass.getConstructor(android.content.Context.class).newInstance(app);
+                Method query = dbClass.getMethod("c");
+                Object cursorObject = query.invoke(cachedDb);
+                if (!(cursorObject instanceof android.database.Cursor)) {
+                    throw new IllegalStateException("dictionary query did not return Cursor");
                 }
-            } finally {
-                cursor.close();
+                android.database.Cursor cursor = (android.database.Cursor) cursorObject;
+                try {
+                    int wordIndex = cursor.getColumnIndex("word");
+                    if (wordIndex < 0) throw new IllegalStateException("word column not found");
+                    while (cursor.moveToNext()) {
+                        String word = cursor.getString(wordIndex);
+                        if (word != null) IMPORTED_WORDS.add(word);
+                    }
+                } finally {
+                    cursor.close();
+                }
+                dictionaryCacheInitialized = true;
             }
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": duplicate check failed: "
-                    + t.getClass().getSimpleName() + ": " + String.valueOf(t.getMessage()));
+            return IMPORTED_WORDS.contains(phrase);
         }
-        return false;
     }
 
     /**
-     * Keep one fixed dictionary file inside Gboard's private files directory,
-     * then feed that real file to Gboard's own PersonalDictionaryImporter.
+     * Reuse Gboard's DB/importer objects instead of creating them for every word.
      */
     private static void importDictionaryThroughGboard(String phrase, String pinyin) {
-        try {
-            Application app = (Application) XposedHelpers.callStaticMethod(
-                    Class.forName("android.app.ActivityThread"),
-                    "currentApplication");
-            if (app == null) throw new IllegalStateException("application=null");
+        synchronized (DICTIONARY_LOCK) {
+            try {
+                Application app = (Application) XposedHelpers.callStaticMethod(
+                        Class.forName("android.app.ActivityThread"), "currentApplication");
+                if (app == null) throw new IllegalStateException("application=null");
+                ClassLoader loader = app.getClassLoader();
+                if (alreadyImported(phrase, loader, app)) return;
 
-            ClassLoader loader = app.getClassLoader();
-            if (alreadyImported(phrase, loader, app)) {
-                return;
+                String dictionaryText = buildDictionaryText(phrase, pinyin);
+                java.io.File file = new java.io.File(DICTIONARY_FILE);
+                java.io.File parent = file.getParentFile();
+                if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.exists()) {
+                    throw new java.io.IOException("cannot create parent directory");
+                }
+                try (java.io.FileOutputStream out = new java.io.FileOutputStream(file, false)) {
+                    out.write(dictionaryText.getBytes(StandardCharsets.UTF_8));
+                    out.flush();
+                }
+
+                if (cachedDb == null || cachedImporter == null) {
+                    Class<?> dbClass = XposedHelpers.findClass(PERSONAL_DICTIONARY_DB, loader);
+                    cachedDb = dbClass.getConstructor(android.content.Context.class).newInstance(app);
+                    Class<?> importerClass = XposedHelpers.findClass(PERSONAL_DICTIONARY_IMPORTER, loader);
+                    cachedImporter = importerClass.getConstructor(
+                            XposedHelpers.findClass("qhc", loader)).newInstance(cachedDb);
+                }
+
+                Class<?> importerClass = cachedImporter.getClass();
+                try (java.io.InputStream in = new java.io.FileInputStream(file)) {
+                    Method importMethod = importerClass.getDeclaredMethod(
+                            "a", java.io.InputStream.class, String.class);
+                    importMethod.setAccessible(true);
+                    importMethod.invoke(cachedImporter, in, "text/plain");
+                }
+                IMPORTED_WORDS.add(phrase);
+            } catch (Throwable t) {
+                Throwable cause = t instanceof java.lang.reflect.InvocationTargetException
+                        && ((java.lang.reflect.InvocationTargetException) t).getCause() != null
+                        ? ((java.lang.reflect.InvocationTargetException) t).getCause() : t;
+                cachedDb = null;
+                cachedImporter = null;
+                XposedBridge.log(TAG + ": IMPORT FAILED " + cause.getClass().getSimpleName()
+                        + ": " + String.valueOf(cause.getMessage()));
             }
-
-            String dictionaryText = buildDictionaryText(phrase, pinyin);
-            java.io.File file = new java.io.File(DICTIONARY_FILE);
-            java.io.File parent = file.getParentFile();
-            if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.exists()) {
-                throw new java.io.IOException("cannot create parent directory");
-            }
-
-            try (java.io.FileOutputStream out = new java.io.FileOutputStream(file, false)) {
-                out.write(dictionaryText.getBytes(StandardCharsets.UTF_8));
-                out.flush();
-            }
-
-            Class<?> dbClass = XposedHelpers.findClass(PERSONAL_DICTIONARY_DB, loader);
-            Object db = dbClass.getConstructor(android.content.Context.class).newInstance(app);
-            Class<?> importerClass = XposedHelpers.findClass(PERSONAL_DICTIONARY_IMPORTER, loader);
-            Object importer = importerClass.getConstructor(
-                    XposedHelpers.findClass("qhc", loader)).newInstance(db);
-
-            try (java.io.InputStream in = new java.io.FileInputStream(file)) {
-                Method importMethod = importerClass.getDeclaredMethod(
-                        "a", java.io.InputStream.class, String.class);
-                importMethod.setAccessible(true);
-                importMethod.invoke(importer, in, "text/plain");
-            }
-        } catch (Throwable t) {
-            Throwable cause = t instanceof java.lang.reflect.InvocationTargetException
-                    && ((java.lang.reflect.InvocationTargetException) t).getCause() != null
-                    ? ((java.lang.reflect.InvocationTargetException) t).getCause() : t;
-            XposedBridge.log(TAG + ": IMPORT FAILED "
-                    + cause.getClass().getSimpleName() + ": "
-                    + String.valueOf(cause.getMessage()));
         }
     }
 
