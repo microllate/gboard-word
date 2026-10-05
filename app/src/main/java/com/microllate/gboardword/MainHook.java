@@ -154,13 +154,10 @@ public final class MainHook implements IXposedHookLoadPackage {
 
     private static synchronized void saveToGboardDictionary(
             Object processor, Object tokens, Object types, String phrase) {
-        // Gboard 18.3.2 has a dedicated Pinyin shortcuts accessor:
-        // iqc.n(context).Q(4)
-        // -> zh_t_i0_pinyin_shortcuts_dictionary_accessor
-        // -> shortcuts_dict_3_3
-        //
-        // Q(4) is the same factory path used by Gboard itself. This avoids
-        // guessing a native handle and avoids writing the dictionary file.
+        // This is the exact API used by Gboard's Personal Dictionary UI.
+        // Gboard writes the entry to Android UserDictionary first:
+        // UserDictionary.Words.addWord(context, word, 250, shortcut, locale)
+        // and its ShortcutsDataManager then imports it into shortcuts_dict_3_3.
         try {
             Application app = (Application) XposedHelpers.callStaticMethod(
                     Class.forName("android.app.ActivityThread"),
@@ -170,83 +167,15 @@ public final class MainHook implements IXposedHookLoadPackage {
                 return;
             }
 
-            Class<?> factory = XposedHelpers.findClass(
-                    "defpackage.iqc", app.getClassLoader());
-
-            Method getFactory = null;
-            for (Method m : factory.getDeclaredMethods()) {
-                if (!"n".equals(m.getName())
-                        || m.getParameterTypes().length != 1
-                        || m.getParameterTypes()[0] != Context.class) {
-                    continue;
-                }
-                getFactory = m;
-                break;
-            }
-            if (getFactory == null) {
-                XposedBridge.log(TAG + ": SHORT-DICT iqc.n(Context) not found");
-                return;
-            }
-
-            getFactory.setAccessible(true);
-            Object pinyinFactory = getFactory.invoke(null, app);
-
-            Method getShortcutAccessor = null;
-            Class<?> c = pinyinFactory.getClass();
-            while (c != null && getShortcutAccessor == null) {
-                for (Method m : c.getDeclaredMethods()) {
-                    if ("Q".equals(m.getName())
-                            && m.getParameterTypes().length == 1
-                            && m.getParameterTypes()[0] == int.class) {
-                        getShortcutAccessor = m;
-                        break;
-                    }
-                }
-                c = c.getSuperclass();
-            }
-            if (getShortcutAccessor == null) {
-                XposedBridge.log(TAG + ": SHORT-DICT Q(int) not found");
-                return;
-            }
-
-            getShortcutAccessor.setAccessible(true);
-            Object accessor = getShortcutAccessor.invoke(pinyinFactory, 4);
-            if (accessor == null) {
-                XposedBridge.log(TAG + ": SHORT-DICT accessor=null; save skipped");
-                return;
-            }
-
-            Method addCount = null;
-            c = accessor.getClass();
-            while (c != null && addCount == null) {
-                for (Method m : c.getDeclaredMethods()) {
-                    Class<?>[] ps = m.getParameterTypes();
-                    if ("b".equals(m.getName()) && ps.length == 4
-                            && ps[0] == String[].class
-                            && ps[1] == int[].class
-                            && ps[2] == String.class
-                            && ps[3] == boolean.class) {
-                        addCount = m;
-                        break;
-                    }
-                }
-                c = c.getSuperclass();
-            }
-
-            if (addCount == null) {
-                XposedBridge.log(TAG + ": SHORT-DICT b(String[],int[],String,boolean) not found"
-                        + " class=" + accessor.getClass().getName());
-                return;
-            }
-
-            String[] pinyin = tokens instanceof String[] ? (String[]) tokens : new String[0];
-            int[] tokenTypes = types instanceof int[] ? (int[]) types : new int[0];
-            addCount.setAccessible(true);
-            Object result = addCount.invoke(accessor, pinyin, tokenTypes, phrase, true);
+            android.provider.UserDictionary.Words.addWord(
+                    app,
+                    phrase,
+                    250,
+                    "",
+                    java.util.Locale.SIMPLIFIED_CHINESE);
 
             XposedBridge.log(TAG + ": SHORT-DICT-ADD phrase=" + phrase
-                    + " pinyin=" + join(pinyin) + " result=" + result
-                    + " accessor=" + accessor.getClass().getName());
+                    + " via=UserDictionary.Words.addWord frequency=250 locale=zh_CN");
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": SHORT-DICT save failed: "
                     + android.util.Log.getStackTraceString(t));
