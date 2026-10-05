@@ -246,7 +246,9 @@ public final class MainHook implements IXposedHookLoadPackage {
     }
 
     private static long findSingleLongField(Object accessor) {
-        long found = Long.MIN_VALUE;
+        // Gboard dictionary native handles on this build are signed negative
+        // 64-bit values (the same form observed in native dictionary calls).
+        // Other long fields in the accessor are unrelated state.
         try {
             Class<?> c = accessor.getClass();
             while (c != null) {
@@ -255,16 +257,13 @@ public final class MainHook implements IXposedHookLoadPackage {
                             || java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
                     f.setAccessible(true);
                     long value = f.getLong(accessor);
-                    if (value == 0) continue;
-                    if (found != Long.MIN_VALUE && found != value) return Long.MIN_VALUE;
-                    found = value;
+                    if (value < -1000000000000L) return value;
                 }
                 c = c.getSuperclass();
             }
         } catch (Throwable ignored) {
-            return Long.MIN_VALUE;
         }
-        return found;
+        return Long.MIN_VALUE;
     }
 
     private static String[] pinyinChars(String[] syllables) {
