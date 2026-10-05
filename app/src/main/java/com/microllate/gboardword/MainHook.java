@@ -25,9 +25,6 @@ public final class MainHook implements IXposedHookLoadPackage {
         try {
             Class<?> pc = XposedHelpers.findClass(PROCESSOR, p.classLoader);
             int hooked = 0;
-            installNativeDictionaryTraceFromProcessor(pc, p.classLoader);
-
-
             for (Method m : pc.getDeclaredMethods()) {
                 if (!"Z".equals(m.getName())) continue;
                 Class<?>[] ps = m.getParameterTypes();
@@ -180,6 +177,10 @@ public final class MainHook implements IXposedHookLoadPackage {
             Object accessor = accessorMethod.invoke(provider);
             if (accessor == null) return;
 
+            // Install on the concrete runtime accessor class. The Personal Dictionary UI
+            // uses this same native class, while the processor's g field only exposes a provider type.
+            installNativeDictionaryTrace(accessor.getClass());
+
 
             Method nativeInsert = null;
             Method nativePersist = null;
@@ -250,10 +251,10 @@ public final class MainHook implements IXposedHookLoadPackage {
     }
 
 
-    private static synchronized void installNativeDictionaryTraceFromProcessor(Class<?> processorClass, ClassLoader loader) {
-        if (nativeTraceInstalled) return;
+    private static synchronized void installNativeDictionaryTrace(Class<?> runtimeClass) {
+        if (nativeTraceInstalled || runtimeClass == null) return;
         try {
-            Class<?> c = processorClass;
+            Class<?> c = runtimeClass;
             Method target = null;
             while (c != null && target == null) {
                 for (Method m : c.getDeclaredMethods()) {
@@ -270,36 +271,11 @@ public final class MainHook implements IXposedHookLoadPackage {
                 c = c.getSuperclass();
             }
             if (target == null) {
-                // The native method is usually declared on the dictionary accessor,
-                // not the processor. Resolve the accessor type from the processor's g field.
-                Class<?> gType = null;
-                c = processorClass;
-                while (c != null && gType == null) {
-                    try {
-                        gType = c.getDeclaredField("g").getType();
-                    } catch (NoSuchFieldException ignored) {
-                        c = c.getSuperclass();
-                    }
-                }
-                if (gType != null) {
-                    c = gType;
-                    while (c != null && target == null) {
-                        for (Method m : c.getDeclaredMethods()) {
-                            Class<?>[] ps = m.getParameterTypes();
-                            if ("nativeInsertOrUpdate".equals(m.getName()) && ps.length == 7
-                                    && ps[0] == long.class && ps[1] == String[].class
-                                    && ps[2] == int[].class && ps[3] == String.class
-                                    && ps[4] == int.class && ps[5] == boolean.class
-                                    && ps[6] == boolean.class) {
-                                target = m;
-                                break;
-                            }
-                        }
-                        c = c.getSuperclass();
-                    }
-                }
+                XposedBridge.log(TAG + ": nativeInsertOrUpdate not found on "
+                        + runtimeClass.getName());
+                return;
             }
-            if (target == null) return;
+
             target.setAccessible(true);
             XposedBridge.hookMethod(target, new XC_MethodHook() {
                 @Override
@@ -319,11 +295,13 @@ public final class MainHook implements IXposedHookLoadPackage {
                 }
             });
             nativeTraceInstalled = true;
-            XposedBridge.log(TAG + ": nativeInsertOrUpdate trace installed early");
-        } catch (Throwable ignored) {
+            XposedBridge.log(TAG + ": nativeInsertOrUpdate trace installed class="
+                    + runtimeClass.getName());
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": native trace install failed: "
+                    + t.getClass().getSimpleName());
         }
     }
-
 
     private static long findSingleLongField(Object accessor) {
         // Gboard dictionary native handles on this build are signed negative
