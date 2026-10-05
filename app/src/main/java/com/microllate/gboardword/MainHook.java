@@ -63,8 +63,7 @@ public final class MainHook implements IXposedHookLoadPackage {
                             XposedBridge.log(TAG + ": SELECT phrase=" + phrase
                                     + " pinyin=" + pinyin);
 
-                            String dictionaryText = buildDictionaryText(phrase, pinyin);
-                            importDictionaryThroughGboard(dictionaryText);
+                            importDictionaryThroughGboard(phrase, pinyin);
                         } catch (Throwable t) {
                             XposedBridge.log(TAG + ": SELECT failed: "
                                     + t.getClass().getSimpleName() + ": "
@@ -82,14 +81,11 @@ public final class MainHook implements IXposedHookLoadPackage {
         }
     }
 
+    private static final String DICTIONARY_FILE =
+            "/data/user/0/com.google.android.inputmethod.latin/files/gboard_word_dictionary.txt";
+
     /**
-     * Generate the exact TXT format accepted by Gboard's Personal Dictionary
-     * importer and return the same content Uri that a file picker would give
-     * to Gboard.
-     */
-    /**
-     * Build the exact TXT content accepted by Gboard's Personal Dictionary
-     * importer, but keep it entirely in memory instead of creating a file.
+     * Build the exact TXT content accepted by Gboard's Personal Dictionary importer.
      */
     private static String buildDictionaryText(String phrase, String pinyin) {
         return "# Gboard Dictionary version:2\\n"
@@ -98,36 +94,80 @@ public final class MainHook implements IXposedHookLoadPackage {
     }
 
     /**
-     * Run Gboard's own PersonalDictionaryImporter core directly. The UI
-     * fragment is only the front-end; qhm parses the TXT and qhf persists
-     * the resulting qgw entry into PersonalDictionary.db.
+     * Check Gboard's PersonalDictionary.db before importing so the same
+     * word/shortcut pair is not written repeatedly.
      */
-    private static void importDictionaryThroughGboard(String dictionaryText) {
+    private static boolean alreadyImported(String phrase, String pinyin, ClassLoader loader,
+            Application app) {
+        try {
+            Class<?> dbClass = XposedHelpers.findClass(PERSONAL_DICTIONARY_DB, loader);
+            Object db = dbClass.getConstructor(android.content.Context.class).newInstance(app);
+            Method query = dbClass.getMethod("c");
+            Object cursorObject = query.invoke(db);
+            if (!(cursorObject instanceof android.database.Cursor)) return false;
+
+            android.database.Cursor cursor = (android.database.Cursor) cursorObject;
+            try {
+                int wordIndex = cursor.getColumnIndex("word");
+                int shortcutIndex = cursor.getColumnIndex("shortcut");
+                while (cursor.moveToNext()) {
+                    String word = wordIndex >= 0 ? cursor.getString(wordIndex) : null;
+                    String shortcut = shortcutIndex >= 0 ? cursor.getString(shortcutIndex) : null;
+                    if (phrase.equals(word) && pinyin.equals(shortcut)) return true;
+                }
+            } finally {
+                cursor.close();
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": duplicate check failed: "
+                    + t.getClass().getSimpleName() + ": " + String.valueOf(t.getMessage()));
+        }
+        return false;
+    }
+
+    /**
+     * Keep one fixed dictionary file inside Gboard's private files directory,
+     * then feed that real file to Gboard's own PersonalDictionaryImporter.
+     */
+    private static void importDictionaryThroughGboard(String phrase, String pinyin) {
         try {
             Application app = (Application) XposedHelpers.callStaticMethod(
                     Class.forName("android.app.ActivityThread"),
                     "currentApplication");
-            if (app == null) {
-                throw new IllegalStateException("application=null");
-            }
+            if (app == null) throw new IllegalStateException("application=null");
 
             ClassLoader loader = app.getClassLoader();
+            if (alreadyImported(phrase, pinyin, loader, app)) {
+                XposedBridge.log(TAG + ": SKIP duplicate phrase=" + phrase
+                        + " shortcut=" + pinyin);
+                return;
+            }
+
+            String dictionaryText = buildDictionaryText(phrase, pinyin);
+            java.io.File file = new java.io.File(DICTIONARY_FILE);
+            java.io.File parent = file.getParentFile();
+            if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.exists()) {
+                throw new java.io.IOException("cannot create parent directory");
+            }
+
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(file, false)) {
+                out.write(dictionaryText.getBytes(StandardCharsets.UTF_8));
+                out.flush();
+            }
+
             Class<?> dbClass = XposedHelpers.findClass(PERSONAL_DICTIONARY_DB, loader);
             Object db = dbClass.getConstructor(android.content.Context.class).newInstance(app);
-
             Class<?> importerClass = XposedHelpers.findClass(PERSONAL_DICTIONARY_IMPORTER, loader);
             Object importer = importerClass.getConstructor(
                     XposedHelpers.findClass("qhc", loader)).newInstance(db);
 
-            try (java.io.InputStream in = new java.io.ByteArrayInputStream(
-                        dictionaryText.getBytes(StandardCharsets.UTF_8))) {
+            try (java.io.InputStream in = new java.io.FileInputStream(file)) {
                 Method importMethod = importerClass.getDeclaredMethod(
                         "a", java.io.InputStream.class, String.class);
                 importMethod.setAccessible(true);
                 Object result = importMethod.invoke(importer, in, "text/plain");
-
-                XposedBridge.log(TAG + ": IMPORT dispatched through Gboard PersonalDictionaryImporter"
-                        + " result=" + String.valueOf(result));
+                XposedBridge.log(TAG + ": IMPORT phrase=" + phrase
+                        + " shortcut=" + pinyin + " result=" + String.valueOf(result));
             }
         } catch (Throwable t) {
             Throwable cause = t instanceof java.lang.reflect.InvocationTargetException
