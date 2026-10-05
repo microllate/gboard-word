@@ -180,27 +180,30 @@ public final class MainHook implements IXposedHookLoadPackage {
             importMethod.setAccessible(true);
             importMethod.invoke(car, parsed);
 
-            // qhm writes the entry into PersonalDictionary.db. The real Gboard
-            // settings flow then wakes PersonalDictionaryDatabaseManager so the
-            // new entry is propagated to the content-data/shortcut dictionaries.
+            // qhe.B() initializes the PersonalDictionaryDatabaseManager.
+            // z() may be a no-op because qhe's constructor sets m=true.
+            // nhl.p() is the actual sync trigger: it submits the content-data
+            // import task to ngs.b.
             Class<?> managerClass = Class.forName("qhe", false, loader);
             Method getManager = managerClass.getDeclaredMethod("B", Context.class);
             getManager.setAccessible(true);
             Object manager = getManager.invoke(null, app);
-            Method refresh = null;
+
+            Method sync = null;
             Class<?> mc = managerClass;
-            while (mc != null && refresh == null) {
+            while (mc != null && sync == null) {
                 try {
-                    refresh = mc.getDeclaredMethod("z");
+                    sync = mc.getDeclaredMethod("p");
                 } catch (NoSuchMethodException ignored) {
                     mc = mc.getSuperclass();
                 }
             }
-            if (refresh == null) {
-                throw new NoSuchMethodException("qhe.z()");
+            if (sync == null) {
+                throw new NoSuchMethodException("qhe.p()/nhl.p()");
             }
-            refresh.setAccessible(true);
-            refresh.invoke(manager);
+
+            sync.setAccessible(true);
+            sync.invoke(manager);
 
             XposedBridge.log(TAG + ": IMPORTED phrase=" + phrase
                     + " shortcut=" + pinyin);
