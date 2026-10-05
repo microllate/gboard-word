@@ -1,6 +1,7 @@
 package com.microllate.gboardword;
 
 import android.app.Application;
+import android.content.Context;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -153,36 +154,65 @@ public final class MainHook implements IXposedHookLoadPackage {
 
     private static synchronized void saveToGboardDictionary(
             Object processor, Object tokens, Object types, String phrase) {
-        // This is the same MutableDictionaryAccessorImpl.b() path used by
-        // Gboard's Chinese Personal Dictionary code (nativeAddCount underneath).
-        // Do not guess the native handle or write the dictionary file ourselves.
+        // Gboard 18.3.2 has a dedicated Pinyin shortcuts accessor:
+        // iqc.n(context).Q(4)
+        // -> zh_t_i0_pinyin_shortcuts_dictionary_accessor
+        // -> shortcuts_dict_3_3
+        //
+        // Q(4) is the same factory path used by Gboard itself. This avoids
+        // guessing a native handle and avoids writing the dictionary file.
         try {
-            Object provider = findFieldInHierarchy(processor, "g");
-            if (provider == null) {
-                XposedBridge.log(TAG + ": GBOARD-DICT provider not found; save skipped");
+            Application app = (Application) XposedHelpers.callStaticMethod(
+                    Class.forName("android.app.ActivityThread"),
+                    "currentApplication");
+            if (app == null) {
+                XposedBridge.log(TAG + ": SHORT-DICT application=null; save skipped");
                 return;
             }
 
-            Method accessorMethod = null;
-            Class<?> c = provider.getClass();
-            while (c != null && accessorMethod == null) {
+            Class<?> factory = XposedHelpers.findClass(
+                    "defpackage.iqc", app.getClassLoader());
+
+            Method getFactory = null;
+            for (Method m : factory.getDeclaredMethods()) {
+                if (!"n".equals(m.getName())
+                        || m.getParameterTypes().length != 1
+                        || m.getParameterTypes()[0] != Context.class) {
+                    continue;
+                }
+                getFactory = m;
+                break;
+            }
+            if (getFactory == null) {
+                XposedBridge.log(TAG + ": SHORT-DICT iqc.n(Context) not found");
+                return;
+            }
+
+            getFactory.setAccessible(true);
+            Object pinyinFactory = getFactory.invoke(null, app);
+
+            Method getShortcutAccessor = null;
+            Class<?> c = pinyinFactory.getClass();
+            while (c != null && getShortcutAccessor == null) {
                 for (Method m : c.getDeclaredMethods()) {
-                    if ("a".equals(m.getName()) && m.getParameterTypes().length == 0) {
-                        accessorMethod = m;
+                    if ("Q".equals(m.getName())
+                            && m.getParameterTypes().length == 1
+                            && m.getParameterTypes()[0] == int.class) {
+                        getShortcutAccessor = m;
                         break;
                     }
                 }
                 c = c.getSuperclass();
             }
-            if (accessorMethod == null) {
-                XposedBridge.log(TAG + ": GBOARD-DICT accessor method not found");
+            if (getShortcutAccessor == null) {
+                XposedBridge.log(TAG + ": SHORT-DICT Q(int) not found");
                 return;
             }
 
-            accessorMethod.setAccessible(true);
-            Object accessor = accessorMethod.invoke(provider);
+            getShortcutAccessor.setAccessible(true);
+            Object accessor = getShortcutAccessor.invoke(pinyinFactory, 4);
             if (accessor == null) {
-                XposedBridge.log(TAG + ": GBOARD-DICT accessor=null; save skipped");
+                XposedBridge.log(TAG + ": SHORT-DICT accessor=null; save skipped");
                 return;
             }
 
@@ -204,7 +234,7 @@ public final class MainHook implements IXposedHookLoadPackage {
             }
 
             if (addCount == null) {
-                XposedBridge.log(TAG + ": GBOARD-DICT b(String[],int[],String,boolean) not found"
+                XposedBridge.log(TAG + ": SHORT-DICT b(String[],int[],String,boolean) not found"
                         + " class=" + accessor.getClass().getName());
                 return;
             }
@@ -213,10 +243,12 @@ public final class MainHook implements IXposedHookLoadPackage {
             int[] tokenTypes = types instanceof int[] ? (int[]) types : new int[0];
             addCount.setAccessible(true);
             Object result = addCount.invoke(accessor, pinyin, tokenTypes, phrase, true);
-            XposedBridge.log(TAG + ": GBOARD-DICT-ADD phrase=" + phrase
-                    + " pinyin=" + join(pinyin) + " result=" + result);
+
+            XposedBridge.log(TAG + ": SHORT-DICT-ADD phrase=" + phrase
+                    + " pinyin=" + join(pinyin) + " result=" + result
+                    + " accessor=" + accessor.getClass().getName());
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": GBOARD-DICT save failed: "
+            XposedBridge.log(TAG + ": SHORT-DICT save failed: "
                     + android.util.Log.getStackTraceString(t));
         }
     }
