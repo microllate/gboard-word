@@ -17,9 +17,6 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static boolean candidateHookInstalled;
     private static PersonalDb db;
     private static Object candidateEngine;
-    private static final java.util.Set<String> dictionaryDiagnosticHooks =
-            new java.util.HashSet<String>();
-
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
         if (!GBOARD.equals(p.packageName)) return;
@@ -27,8 +24,6 @@ public final class MainHook implements IXposedHookLoadPackage {
         try {
             Class<?> pc = XposedHelpers.findClass(PROCESSOR, p.classLoader);
             int hooked = 0;
-            hookNativeDictionaryMethods(p.classLoader);
-
 
             for (Method m : pc.getDeclaredMethods()) {
                 if (!"Z".equals(m.getName())) continue;
@@ -78,7 +73,7 @@ public final class MainHook implements IXposedHookLoadPackage {
                                     && !phrase.isEmpty()
                                     && b != null) {
                                 try {
-                                    saveToGboardDictionary(x.thisObject, hdl, b, c, phrase);
+                                    saveToGboardDictionary(x.thisObject, b, c, phrase);
 
                                     ensureDb();
                                     if (db != null) {
@@ -154,48 +149,9 @@ public final class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    private static void hookNativeDictionaryMethods(ClassLoader loader) {
-        try {
-            Class<?> c = XposedHelpers.findClass(
-                    "com.google.android.apps.inputmethod.libs.hmm.MutableDictionaryAccessorImpl", loader);
-            for (Method m : c.getDeclaredMethods()) {
-                if (!"nativeInsertOrUpdate".equals(m.getName())) continue;
-                m.setAccessible(true);
-                XposedBridge.hookMethod(m, new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam x) {
-                        try {
-                            StringBuilder s = new StringBuilder(TAG + ": NATIVE-INSERT ");
-                            for (int i = 0; i < x.args.length; i++) {
-                                if (i > 0) s.append(", ");
-                                s.append(formatDiagnosticArg(x.args[i]));
-                            }
-                            XposedBridge.log(s.toString());
-                            XposedBridge.log(TAG + ": NATIVE-INSERT-STACK\\n"
-                                    + android.util.Log.getStackTraceString(new Throwable()));
-                        } catch (Throwable t) {
-                            XposedBridge.log(TAG + ": NATIVE-INSERT log failed: "
-                                    + t.getClass().getSimpleName());
-                        }
-                    }
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam x) {
-                        XposedBridge.log(TAG + ": NATIVE-INSERT-RET="
-                                + formatDiagnosticArg(x.getResult()));
-                    }
-                });
-                XposedBridge.log(TAG + ": hooked nativeInsertOrUpdate=" + m.toGenericString());
-            }
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": nativeInsertOrUpdate hook failed: "
-                    + android.util.Log.getStackTraceString(t));
-        }
-    }
-
     private static synchronized void saveToGboardDictionary(
-            Object processor, Object hdl, Object tokens, Object types, String phrase) {
-        // g -> u(context) -> user_dictionary_accessor_for_ime -> shortcuts_dict_3_3.
-        // f is the other dictionary; c() only decreases its count.
+            Object processor, Object tokens, Object types, String phrase) {
+        // Current test target: Gboard shortcuts_dict_3_3.
         try {
             Object provider = findFieldInHierarchy(processor, "g");
             if (provider == null) {
@@ -225,8 +181,6 @@ public final class MainHook implements IXposedHookLoadPackage {
                 XposedBridge.log(TAG + ": USER-DICT g.a() returned null; save skipped");
                 return;
             }
-
-            installDictionaryAccessorDiagnostics(accessor);
 
             Method nativeInsert = null;
             Method nativePersist = null;
@@ -320,59 +274,6 @@ public final class MainHook implements IXposedHookLoadPackage {
         return out.toArray(new String[0]);
     }
 
-    private static synchronized void installDictionaryAccessorDiagnostics(Object accessor) {
-        if (accessor == null) return;
-
-        try {
-            Class<?> c = accessor.getClass();
-            XposedBridge.log(TAG + ": DICT-CLASS=" + c.getName());
-
-            while (c != null && c != Object.class) {
-                for (Method m : c.getDeclaredMethods()) {
-                    String key = c.getName() + "#" + m.toGenericString();
-                    if (!dictionaryDiagnosticHooks.add(key)) continue;
-
-                    XposedBridge.log(TAG + ": DICT-METHOD " + m.toGenericString());
-
-                    m.setAccessible(true);
-                    XposedBridge.hookMethod(m, new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam x) {
-                            try {
-                                StringBuilder s = new StringBuilder(TAG + ": DICT-CALL ")
-                                        .append(m.getName()).append("(");
-                                for (int i = 0; i < x.args.length; i++) {
-                                    if (i > 0) s.append(", ");
-                                    s.append(formatDiagnosticArg(x.args[i]));
-                                }
-                                s.append(")");
-                                XposedBridge.log(s.toString());
-                            } catch (Throwable t) {
-                                XposedBridge.log(TAG + ": DICT-CALL log failed: "
-                                        + t.getClass().getSimpleName());
-                            }
-                        }
-
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam x) {
-                            try {
-                                XposedBridge.log(TAG + ": DICT-RET "
-                                        + m.getName() + "=" + formatDiagnosticArg(x.getResult()));
-                            } catch (Throwable t) {
-                                XposedBridge.log(TAG + ": DICT-RET log failed: "
-                                        + t.getClass().getSimpleName());
-                            }
-                        }
-                    });
-                }
-                c = c.getSuperclass();
-            }
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": DICT diagnostics failed: "
-                    + android.util.Log.getStackTraceString(t));
-        }
-    }
-
     private static String formatDiagnosticArg(Object value) {
         if (value == null) return "null";
         if (value instanceof String[]) return "String[]=" + java.util.Arrays.toString((String[]) value);
@@ -382,10 +283,6 @@ public final class MainHook implements IXposedHookLoadPackage {
         if (value.getClass().isArray()) return value.getClass().getComponentType().getSimpleName() + "[]";
         String s = String.valueOf(value);
         return s.length() > 160 ? s.substring(0, 160) + "..." : s;
-    }
-
-    private static String typeName(Object o) {
-        return o == null ? "null" : o.getClass().getName();
     }
 
     private static synchronized void installCandidateHookFromF(Class<?> runtimeClass) {
