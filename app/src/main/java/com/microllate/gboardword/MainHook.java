@@ -22,8 +22,7 @@ public final class MainHook implements IXposedHookLoadPackage {
             "com.google.android.apps.inputmethod.libs.chinese.ime.hmm.AbstractHmmChineseDecodeProcessor";
     private static final String PERSONAL_DICTIONARY_IMPORTER =
             "com.google.android.libraries.inputmethod.personaldictionary.PersonalDictionaryImporter";
-    private static final String PERSONAL_DICTIONARY_DB =
-            "com.google.android.libraries.inputmethod.personaldictionary.qhf";
+    private static final String PERSONAL_DICTIONARY_DB = "qhf";
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
@@ -163,9 +162,7 @@ public final class MainHook implements IXposedHookLoadPackage {
 
             Class<?> importerClass = XposedHelpers.findClass(PERSONAL_DICTIONARY_IMPORTER, loader);
             Object importer = importerClass.getConstructor(
-                    Class.forName(
-                            "com.google.android.libraries.inputmethod.personaldictionary.qhc",
-                            false, loader)).newInstance(db);
+                    XposedHelpers.findClass("qhc", loader)).newInstance(db);
 
             try (java.io.InputStream in = app.getContentResolver().openInputStream(uri)) {
                 if (in == null) {
