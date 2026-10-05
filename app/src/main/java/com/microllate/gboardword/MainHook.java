@@ -51,7 +51,7 @@ public final class MainHook implements IXposedHookLoadPackage {
 
                             String phrase = phraseObject == null
                                     ? null : String.valueOf(phraseObject);
-                            String pinyin = join(tokens);
+                            String pinyin = shortcutFromTokens(tokens);
 
                             if (!Boolean.TRUE.equals(fullMatch)
                                     || phrase == null || phrase.isEmpty()
@@ -85,7 +85,7 @@ public final class MainHook implements IXposedHookLoadPackage {
     private static synchronized void importToGboardPersonalDictionary(
             ClassLoader loader, Object tokens, String phrase) {
         try {
-            String pinyin = join(tokens);
+            String pinyin = shortcutFromTokens(tokens);
             if (pinyin == null || pinyin.isEmpty()
                     || phrase == null || phrase.isEmpty()) {
                 return;
@@ -205,6 +205,22 @@ public final class MainHook implements IXposedHookLoadPackage {
         }
 
         return String.valueOf(value);
+    }
+
+    private static String shortcutFromTokens(Object value) {
+        String pinyin = join(value);
+        if (pinyin.isEmpty()) return "";
+
+        StringBuilder result = new StringBuilder();
+        String[] syllables = pinyin.trim().split("\\s+");
+        for (String syllable : syllables) {
+            if (syllable.isEmpty()) continue;
+            if ("sh".equals(syllable)) syllable = "shi";
+            else if ("ch".equals(syllable)) syllable = "chi";
+            else if ("zh".equals(syllable)) syllable = "zhi";
+            result.append(syllable);
+        }
+        return result.toString();
     }
 
     private static Object findField(Object object, String name) {
