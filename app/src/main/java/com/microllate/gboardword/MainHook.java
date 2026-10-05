@@ -218,8 +218,6 @@ public final class MainHook implements IXposedHookLoadPackage {
 
                     XposedBridge.log(TAG + ": DICT-METHOD " + m.toGenericString());
 
-                    if (java.lang.reflect.Modifier.isStatic(m.getModifiers())) continue;
-
                     m.setAccessible(true);
                     XposedBridge.hookMethod(m, new XC_MethodHook() {
                         @Override
