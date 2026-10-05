@@ -1,9 +1,6 @@
 package com.microllate.gboardword;
 
 import android.app.Application;
-import android.content.ContentResolver;
-import android.content.ContentValues;
-import android.net.Uri;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -60,9 +57,6 @@ public final class MainHook implements IXposedHookLoadPackage {
                                 return;
                             }
 
-                            XposedBridge.log(TAG + ": SELECT phrase=" + phrase
-                                    + " pinyin=" + pinyin);
-
                             importDictionaryThroughGboard(phrase, pinyin);
                         } catch (Throwable t) {
                             XposedBridge.log(TAG + ": SELECT failed: "
@@ -74,7 +68,6 @@ public final class MainHook implements IXposedHookLoadPackage {
                 hooked++;
             }
 
-            XposedBridge.log(TAG + ": hook ready methods=" + hooked);
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": hook install failed: "
                     + t.getClass().getSimpleName());
@@ -136,8 +129,6 @@ public final class MainHook implements IXposedHookLoadPackage {
 
             ClassLoader loader = app.getClassLoader();
             if (alreadyImported(phrase, loader, app)) {
-                XposedBridge.log(TAG + ": SKIP duplicate phrase=" + phrase
-                        + " shortcut=" + pinyin);
                 return;
             }
 
