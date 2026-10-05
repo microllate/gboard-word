@@ -16,6 +16,7 @@ public final class MainHook implements IXposedHookLoadPackage {
             "com.google.android.apps.inputmethod.libs.chinese.ime.hmm.AbstractHmmChineseDecodeProcessor";
     private static boolean candidateHookInstalled;
     private static boolean nativeTraceInstalled;
+    private static boolean shortcutTraceInstalled;
     private static PersonalDb db;
     private static Object candidateEngine;
     @Override
@@ -23,6 +24,7 @@ public final class MainHook implements IXposedHookLoadPackage {
         if (!GBOARD.equals(p.packageName)) return;
 
         try {
+            installShortcutTraceAtStartup(p.classLoader);
             Class<?> pc = XposedHelpers.findClass(PROCESSOR, p.classLoader);
             int hooked = 0;
             for (Method m : pc.getDeclaredMethods()) {
@@ -216,6 +218,37 @@ public final class MainHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": GBOARD-DICT save failed: "
                     + android.util.Log.getStackTraceString(t));
+        }
+    }
+
+    private static synchronized void installShortcutTraceAtStartup(ClassLoader loader) {
+        if (shortcutTraceInstalled) return;
+        try {
+            Class<?> clazz = XposedHelpers.findClass(
+                    "com.google.android.apps.inputmethod.libs.hmm.MutableDictionaryAccessorImpl",
+                    loader);
+            for (Method m : clazz.getDeclaredMethods()) {
+                if (!"nativeInsertOrUpdate".equals(m.getName())) continue;
+                Class<?>[] ps = m.getParameterTypes();
+                if (ps.length != 7) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override protected void beforeHookedMethod(MethodHookParam x) {
+                        try {
+                            XposedBridge.log(TAG + ": SHORT-INSERT handle=" + x.args[0]
+                                    + " phrase=" + x.args[3]
+                                    + " count=" + x.args[4]
+                                    + " flags=" + x.args[5] + "," + x.args[6]);
+                        } catch (Throwable ignored) {}
+                    }
+                });
+                shortcutTraceInstalled = true;
+                XposedBridge.log(TAG + ": SHORT-TRACE installed");
+                break;
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": SHORT-TRACE install failed "
+                    + t.getClass().getSimpleName());
         }
     }
 
