@@ -194,12 +194,11 @@ public final class MainHook implements IXposedHookLoadPackage {
             while (c != null && insert == null) {
                 for (Method m : c.getDeclaredMethods()) {
                     Class<?>[] ps = m.getParameterTypes();
-                    if ("b".equals(m.getName())
-                            && ps.length == 4
+                    if ("c".equals(m.getName())
+                            && ps.length == 3
                             && ps[0] == String[].class
                             && ps[1] == int[].class
-                            && ps[2] == String.class
-                            && ps[3] == boolean.class) {
+                            && ps[2] == String.class) {
                         insert = m;
                         break;
                     }
@@ -208,12 +207,12 @@ public final class MainHook implements IXposedHookLoadPackage {
             }
 
             if (insert == null) {
-                XposedBridge.log(TAG + ": USER-DICT b(String[],int[],String,boolean) not found; save skipped");
+                XposedBridge.log(TAG + ": USER-DICT c(String[],int[],String) not found; save skipped");
                 return;
             }
 
             insert.setAccessible(true);
-            insert.invoke(accessor, tokens, types, phrase, true);
+            insert.invoke(accessor, tokens, types, phrase);
             XposedBridge.log(TAG + ": GBOARD-USER-DICT-SAVED phrase=" + phrase
                     + " pinyin=" + join(tokens)
                     + " accessor=" + accessor.getClass().getName());
