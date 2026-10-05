@@ -1,10 +1,11 @@
 package com.microllate.gboardword;
 
 import android.app.Application;
-import android.content.Context;
-import java.io.ByteArrayInputStream;
-import java.io.InputStream;
-import java.lang.reflect.Constructor;
+import android.content.ContentResolver;
+import android.content.ContentValues;
+import android.net.Uri;
+import android.provider.MediaStore;
+import java.io.OutputStream;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -62,13 +63,11 @@ public final class MainHook implements IXposedHookLoadPackage {
                             XposedBridge.log(TAG + ": SELECT phrase=" + phrase
                                     + " pinyin=" + pinyin);
 
-                            importToGboardPersonalDictionary(
-                                    x.thisObject.getClass().getClassLoader(),
-                                    tokens,
-                                    phrase);
+                            generateDictionaryTxt(phrase, pinyin);
                         } catch (Throwable t) {
                             XposedBridge.log(TAG + ": SELECT failed: "
-                                    + t.getClass().getSimpleName());
+                                    + t.getClass().getSimpleName() + ": "
+                                    + String.valueOf(t.getMessage()));
                         }
                     }
                 });
@@ -82,136 +81,55 @@ public final class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    private static synchronized void importToGboardPersonalDictionary(
-            ClassLoader loader, Object tokens, String phrase) {
+    /**
+     * Generate the exact TXT format accepted by Gboard's Personal Dictionary
+     * importer. For this test build we deliberately do NOT call Gboard's
+     * internal importer; the generated file is imported manually from the UI.
+     */
+    private static synchronized void generateDictionaryTxt(
+            String phrase, String pinyin) {
         try {
-            String pinyin = shortcutFromTokens(tokens);
-            if (pinyin == null || pinyin.isEmpty()
-                    || phrase == null || phrase.isEmpty()) {
-                return;
-            }
-
             Application app = (Application) XposedHelpers.callStaticMethod(
                     Class.forName("android.app.ActivityThread"),
                     "currentApplication");
             if (app == null) {
-                XposedBridge.log(TAG + ": import failed: application=null");
+                XposedBridge.log(TAG + ": TXT failed: application=null");
                 return;
             }
-
-            Class<?> qhfClass = Class.forName("qhf", false, loader);
-            Constructor<?> qhfConstructor =
-                    qhfClass.getDeclaredConstructor(Context.class);
-            qhfConstructor.setAccessible(true);
-            Object qhc = qhfConstructor.newInstance(app);
-
-            Class<?> carClass = Class.forName("car", false, loader);
-            Constructor<?> carConstructor = carClass.getDeclaredConstructor();
-            carConstructor.setAccessible(true);
-            Object car = carConstructor.newInstance();
-
-            Class<?> qhmClass = Class.forName("qhm", false, loader);
-            Constructor<?> importerConstructor = null;
-            for (Constructor<?> constructor : qhmClass.getDeclaredConstructors()) {
-                Class<?>[] ps = constructor.getParameterTypes();
-                if (ps.length == 1 && ps[0].isAssignableFrom(qhc.getClass())) {
-                    importerConstructor = constructor;
-                    break;
-                }
-            }
-            if (importerConstructor == null) {
-                throw new NoSuchMethodException("qhm(qhc)");
-            }
-
-            importerConstructor.setAccessible(true);
-            Object importer = importerConstructor.newInstance(qhc);
 
             String dictionaryText =
                     "# Gboard Dictionary version:2\n"
                     + "# Gboard Dictionary format:shortcut\tword\tlanguage_tag\tpos_tag\n"
                     + pinyin + "\t" + phrase + "\tzh-CN\t\n";
 
-            InputStream input = new ByteArrayInputStream(
-                    dictionaryText.getBytes(StandardCharsets.UTF_8));
+            ContentResolver resolver = app.getContentResolver();
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.MediaColumns.DISPLAY_NAME, "gboard_word_dictionary.txt");
+            values.put(MediaStore.MediaColumns.MIME_TYPE, "text/plain");
+            values.put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/GboardWord");
 
-            Method parse = null;
-            Class<?> c = qhmClass;
-            while (c != null && parse == null) {
-                for (Method method : c.getDeclaredMethods()) {
-                    Class<?>[] ps = method.getParameterTypes();
-                    if ("a".equals(method.getName())
-                            && ps.length == 2
-                            && InputStream.class.isAssignableFrom(ps[0])
-                            && ps[1] == String.class) {
-                        parse = method;
-                        break;
-                    }
+            Uri uri = resolver.insert(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+            if (uri == null) {
+                throw new IllegalStateException("MediaStore insert returned null");
+            }
+
+            try (OutputStream out = resolver.openOutputStream(uri, "w")) {
+                if (out == null) {
+                    throw new IllegalStateException("openOutputStream returned null");
                 }
-                c = c.getSuperclass();
-            }
-            if (parse == null) {
-                throw new NoSuchMethodException("qhm.a(InputStream,String)");
+                out.write(dictionaryText.getBytes(StandardCharsets.UTF_8));
+                out.flush();
             }
 
-            parse.setAccessible(true);
-            Object parsed = parse.invoke(importer, input, "dictionary.txt");
-            if (parsed == null) {
-                throw new IllegalStateException("qhm returned null");
-            }
-
-            Method importMethod = null;
-            c = carClass;
-            while (c != null && importMethod == null) {
-                for (Method method : c.getDeclaredMethods()) {
-                    Class<?>[] ps = method.getParameterTypes();
-                    if ("k".equals(method.getName())
-                            && ps.length == 1
-                            && ps[0].isAssignableFrom(parsed.getClass())) {
-                        importMethod = method;
-                        break;
-                    }
-                }
-                c = c.getSuperclass();
-            }
-            if (importMethod == null) {
-                throw new NoSuchMethodException("car.k(qhl)");
-            }
-
-            importMethod.setAccessible(true);
-            importMethod.invoke(car, parsed);
-
-            // qhe.B() initializes the PersonalDictionaryDatabaseManager.
-            // z() may be a no-op because qhe's constructor sets m=true.
-            // nhl.p() is the actual sync trigger: it submits the content-data
-            // import task to ngs.b.
-            Class<?> managerClass = Class.forName("qhe", false, loader);
-            Method getManager = managerClass.getDeclaredMethod("B", Context.class);
-            getManager.setAccessible(true);
-            Object manager = getManager.invoke(null, app);
-
-            Method sync = null;
-            Class<?> mc = managerClass;
-            while (mc != null && sync == null) {
-                try {
-                    sync = mc.getDeclaredMethod("p");
-                } catch (NoSuchMethodException ignored) {
-                    mc = mc.getSuperclass();
-                }
-            }
-            if (sync == null) {
-                throw new NoSuchMethodException("qhe.p()/nhl.p()");
-            }
-
-            sync.setAccessible(true);
-            sync.invoke(manager);
-
-            XposedBridge.log(TAG + ": IMPORTED phrase=" + phrase
+            XposedBridge.log(TAG + ": TXT generated: "
+                    + "Download/GboardWord/gboard_word_dictionary.txt"
+                    + " phrase=" + phrase
                     + " shortcut=" + pinyin);
         } catch (Throwable t) {
-            Throwable cause = t.getCause() == null ? t : t.getCause();
-            XposedBridge.log(TAG + ": IMPORT FAILED "
-                    + cause.getClass().getSimpleName() + ": "
-                    + String.valueOf(cause.getMessage()));
+            XposedBridge.log(TAG + ": TXT FAILED "
+                    + t.getClass().getSimpleName() + ": "
+                    + String.valueOf(t.getMessage()));
         }
     }
 
