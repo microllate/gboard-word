@@ -27,6 +27,8 @@ public final class MainHook implements IXposedHookLoadPackage {
         try {
             Class<?> pc = XposedHelpers.findClass(PROCESSOR, p.classLoader);
             int hooked = 0;
+            hookNativeDictionaryMethods(p.classLoader);
+
 
             for (Method m : pc.getDeclaredMethods()) {
                 if (!"Z".equals(m.getName())) continue;
@@ -148,6 +150,42 @@ public final class MainHook implements IXposedHookLoadPackage {
 
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": hook install failed: "
+                    + android.util.Log.getStackTraceString(t));
+        }
+    }
+
+    private static void hookNativeDictionaryMethods(ClassLoader loader) {
+        try {
+            Class<?> c = XposedHelpers.findClass(
+                    "com.google.android.apps.inputmethod.libs.hmm.MutableDictionaryAccessorImpl", loader);
+            for (Method m : c.getDeclaredMethods()) {
+                if (!"nativeInsertOrUpdate".equals(m.getName())) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam x) {
+                        try {
+                            StringBuilder s = new StringBuilder(TAG + ": NATIVE-INSERT ");
+                            for (int i = 0; i < x.args.length; i++) {
+                                if (i > 0) s.append(", ");
+                                s.append(formatDiagnosticArg(x.args[i]));
+                            }
+                            XposedBridge.log(s.toString());
+                        } catch (Throwable t) {
+                            XposedBridge.log(TAG + ": NATIVE-INSERT log failed: "
+                                    + t.getClass().getSimpleName());
+                        }
+                    }
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam x) {
+                        XposedBridge.log(TAG + ": NATIVE-INSERT-RET="
+                                + formatDiagnosticArg(x.getResult()));
+                    }
+                });
+                XposedBridge.log(TAG + ": hooked nativeInsertOrUpdate=" + m.toGenericString());
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": nativeInsertOrUpdate hook failed: "
                     + android.util.Log.getStackTraceString(t));
         }
     }
