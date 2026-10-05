@@ -50,6 +50,7 @@ public final class MainHook implements IXposedHookLoadPackage {
                                 && "hcv".equals(learned.getClass().getSimpleName())) {
                             Object a = field(learned, "a");
                             Object b = field(learned, "b");
+                            Object c = field(learned, "c");
                             Object e = field(learned, "e");
                             String phrase = a == null ? null : String.valueOf(a);
                             String pinyin = join(b);
@@ -59,14 +60,19 @@ public final class MainHook implements IXposedHookLoadPackage {
                                     && !phrase.isEmpty()
                                     && b != null) {
                                 try {
+                                    // Use Gboard's own MutableDictionaryAccessorImpl instead
+                                    // of maintaining a separate local dictionary.
+                                    saveToGboardDictionary(x.thisObject, hdl, b, c, phrase);
+
+                                    // Keep the old local record for diagnostics for now.
                                     ensureDb();
                                     if (db != null) {
                                         int count = db.record(pinyin, phrase);
-                                        XposedBridge.log(TAG + ": SAVED phrase=" + phrase
+                                        XposedBridge.log(TAG + ": LOCAL-SAVED phrase=" + phrase
                                                 + " pinyin=" + pinyin + " count=" + count);
                                     }
                                 } catch (Throwable t) {
-                                    XposedBridge.log(TAG + ": DB save failed: "
+                                    XposedBridge.log(TAG + ": dictionary save failed: "
                                             + android.util.Log.getStackTraceString(t));
                                 }
                             }
@@ -133,6 +139,61 @@ public final class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + ": hook install failed: "
                     + android.util.Log.getStackTraceString(t));
         }
+    }
+
+    private static synchronized void saveToGboardDictionary(
+            Object processor, Object hdl, Object tokens, Object types, String phrase) {
+        if (!(tokens instanceof String[]) || !(types instanceof int[])) {
+            XposedBridge.log(TAG + ": dictionary args unexpected tokens="
+                    + typeName(tokens) + " types=" + typeName(types));
+            return;
+        }
+
+        Object accessor = findObjectByTypeName(processor, "MutableDictionaryAccessorImpl", 6);
+        if (accessor == null) {
+            accessor = findObjectByTypeName(hdl, "MutableDictionaryAccessorImpl", 6);
+        }
+        if (accessor == null) {
+            XposedBridge.log(TAG + ": MutableDictionaryAccessorImpl not found");
+            return;
+        }
+
+        try {
+            Method add = null;
+            Class<?> c = accessor.getClass();
+            while (c != null && add == null) {
+                for (Method m : c.getDeclaredMethods()) {
+                    if (!"b".equals(m.getName())) continue;
+                    Class<?>[] p = m.getParameterTypes();
+                    if (p.length == 4
+                            && p[0] == String[].class
+                            && p[1] == int[].class
+                            && p[2] == String.class
+                            && p[3] == boolean.class) {
+                        add = m;
+                        break;
+                    }
+                }
+                c = c.getSuperclass();
+            }
+
+            if (add == null) {
+                XposedBridge.log(TAG + ": MutableDictionaryAccessorImpl.b() not found");
+                return;
+            }
+
+            add.setAccessible(true);
+            add.invoke(accessor, tokens, types, phrase, true);
+            XposedBridge.log(TAG + ": GBOARD-SAVED phrase=" + phrase
+                    + " pinyin=" + join(tokens));
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": native dictionary save failed: "
+                    + android.util.Log.getStackTraceString(t));
+        }
+    }
+
+    private static String typeName(Object o) {
+        return o == null ? "null" : o.getClass().getName();
     }
 
     private static synchronized void installCandidateHookFromF(Class<?> runtimeClass) {
