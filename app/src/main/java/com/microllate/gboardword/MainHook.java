@@ -94,10 +94,10 @@ public final class MainHook implements IXposedHookLoadPackage {
     }
 
     /**
-     * Check Gboard's PersonalDictionary.db before importing so the same
-     * word/shortcut pair is not written repeatedly.
+     * Check whether the Chinese word is already in Gboard's PersonalDictionary.db.
+     * The shortcut/pinyin is intentionally ignored for duplicate detection.
      */
-    private static boolean alreadyImported(String phrase, String pinyin, ClassLoader loader,
+    private static boolean alreadyImported(String phrase, ClassLoader loader,
             Application app) {
         try {
             Class<?> dbClass = XposedHelpers.findClass(PERSONAL_DICTIONARY_DB, loader);
@@ -109,11 +109,9 @@ public final class MainHook implements IXposedHookLoadPackage {
             android.database.Cursor cursor = (android.database.Cursor) cursorObject;
             try {
                 int wordIndex = cursor.getColumnIndex("word");
-                int shortcutIndex = cursor.getColumnIndex("shortcut");
                 while (cursor.moveToNext()) {
                     String word = wordIndex >= 0 ? cursor.getString(wordIndex) : null;
-                    String shortcut = shortcutIndex >= 0 ? cursor.getString(shortcutIndex) : null;
-                    if (phrase.equals(word) && pinyin.equals(shortcut)) return true;
+                    if (phrase.equals(word)) return true;
                 }
             } finally {
                 cursor.close();
@@ -137,7 +135,7 @@ public final class MainHook implements IXposedHookLoadPackage {
             if (app == null) throw new IllegalStateException("application=null");
 
             ClassLoader loader = app.getClassLoader();
-            if (alreadyImported(phrase, pinyin, loader, app)) {
+            if (alreadyImported(phrase, loader, app)) {
                 XposedBridge.log(TAG + ": SKIP duplicate phrase=" + phrase
                         + " shortcut=" + pinyin);
                 return;
