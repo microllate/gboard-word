@@ -48,6 +48,20 @@ public final class MainHook implements IXposedHookLoadPackage {
                         }
 
                         Object learned = findFieldInHierarchy(x.thisObject, "O");
+                        XposedBridge.log(TAG + ": SELECT O class="
+                                + (learned == null ? "null" : learned.getClass().getName())
+                                + " value=" + String.valueOf(learned));
+                        if (learned != null) {
+                            try {
+                                XposedBridge.log(TAG + ": SELECT O.a=" + field(learned, "a")
+                                        + " O.b=" + join(field(learned, "b"))
+                                        + " O.c=" + formatDiagnosticArg(field(learned, "c"))
+                                        + " O.e=" + field(learned, "e"));
+                            } catch (Throwable t) {
+                                XposedBridge.log(TAG + ": SELECT O fields failed: "
+                                        + t.getClass().getSimpleName());
+                            }
+                        }
                         if (learned != null
                                 && "hcv".equals(learned.getClass().getSimpleName())) {
                             Object a = field(learned, "a");
