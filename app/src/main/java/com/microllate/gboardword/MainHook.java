@@ -171,6 +171,8 @@ public final class MainHook implements IXposedHookLoadPackage {
                                 s.append(formatDiagnosticArg(x.args[i]));
                             }
                             XposedBridge.log(s.toString());
+                            XposedBridge.log(TAG + ": NATIVE-INSERT-STACK\\n"
+                                    + android.util.Log.getStackTraceString(new Throwable()));
                         } catch (Throwable t) {
                             XposedBridge.log(TAG + ": NATIVE-INSERT log failed: "
                                     + t.getClass().getSimpleName());
